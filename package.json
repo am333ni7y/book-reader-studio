@@ -1,0 +1,41 @@
+{
+  "name": "book-reader-studio",
+  "version": "2.0.0",
+  "description": "Local-first PDF & EPUB Book Reader Studio with RTL/LTR typography, dual-mode & reflowable highlighting, bookmarks, smart TOC, and Obsidian Markdown export (macOS, Windows, Android).",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "ketabkhan": "./bin/ketabkhan.mjs",
+    "book-reader-studio": "./bin/ketabkhan.mjs"
+  },
+  "scripts": {
+    "start": "node bin/ketabkhan.mjs start",
+    "start:lan": "node bin/ketabkhan.mjs start --lan",
+    "seed": "node scripts/generate-sample-book.mjs",
+    "doctor": "node bin/ketabkhan.mjs doctor"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/am333ni7y/book-reader-studio.git"
+  },
+  "keywords": [
+    "pdf-reader",
+    "epub-reader",
+    "ebook",
+    "persian",
+    "rtl",
+    "obsidian",
+    "sqlite",
+    "local-first",
+    "termux",
+    "android",
+    "pwa"
+  ],
+  "dependencies": {
+    "pdfjs-dist": "^6.5.438",
+    "vazirmatn": "^33.0.3"
+  }
+}

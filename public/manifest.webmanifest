@@ -1,0 +1,24 @@
+{
+  "id": "/",
+  "name": "Ketabkhan Studio — کتاب‌خان استودیو",
+  "short_name": "Ketabkhan",
+  "description": "Local-first PDF & EPUB Book Reader Studio with RTL/LTR typography, highlights, bookmarks, and Obsidian export.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f3ec",
+  "theme_color": "#9a5b13",
+  "dir": "rtl",
+  "lang": "fa",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

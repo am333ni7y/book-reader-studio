@@ -23,7 +23,7 @@ function fixVisualRtlBrackets(token, itemDir) {
  */
 export function normalizePersianText(str) {
   if (!str) return '';
-  return str
+  return String(str)
     .normalize('NFKC')
     .replace(/\u064A/g, '\u06CC') // Arabic Yeh -> Persian Yeh
     .replace(/\u0643/g, '\u06A9') // Arabic Kaf -> Persian Kaf

@@ -23,8 +23,11 @@ Ketabkhan Studio (book-reader-studio): Ameeen's own local-first PDF + EPUB reade
 ## Status and next steps
 - 2026-11-26: v3.0.0 released (APK signed with a throwaway CI key, so the next APK cannot update it). Review fixes in progress on `fix/review-findings`.
 - 2026-11-26: permanent Android keystore created (PKCS12 via openssl, alias `ketabkhan`, RSA 4096, valid to 2054, cert SHA256 `9E:51:2B:BB:…:DC:57`). Stored as DPAPI `book-reader-studio-android-keystore-b64`, `-keystore-password`, `-key-password`, `-key-alias` + vault `secrets/book-reader-studio.json`; the 4 GitHub secrets are set.
-- Open: unify the two EPUB parsers; code signing for Windows/macOS.
+- 2026-11-26: v3.1.0 released (all 5 assets; APK signed with the permanent key). EPUB parsers unified: shared pure core `public/js/epub-core.js` (ZIP directory, OPF/nav/NCX, sanitizer, CSS scoping, search); `lib/epub-parser.mjs` (fd + zlib) and `public/js/epub-client.js` (Blob + DecompressionStream) are thin adapters. README screenshots in `docs/screenshots/` (Iminify-compressed).
+- Open: code signing for Windows/macOS; Android client path only tested in Node/desktop browser, not in a real WebView.
 
 ## Gotchas
-- Three persistence backends (SQLite, JSON, IndexedDB) and two EPUB parsers must be kept in sync until unified.
+- Three persistence backends (SQLite, JSON, IndexedDB); backup import/matching logic is duplicated in `server.mjs` and `client-backend.js` (keep in sync).
+- Client mode (IndexedDB) is chosen when `/api/health` fails; to test it in a desktop browser, serve `public/` statically with `/api/*` returning 404.
+- Screenshots: headless Chrome over CDP (script pattern in `hugooptic/design/product/shots/themec/cdp-shot.mjs`), fresh `--user-data-dir`, delete afterwards.
 - Electron/desktop data dir differs from CLI data dir (`lib/paths.mjs`).

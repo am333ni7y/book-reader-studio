@@ -6,6 +6,16 @@
 
 [بازگشت به README دوزبانه](./README.md)
 
+![مطالعه کتاب EPUB دوزبانه با هایلایت، روبان بوکمارک و فهرست سفارشی](docs/screenshots/reader-epub.png)
+
+| کتابخانه | هایلایت‌ها و یادداشت‌ها |
+| --- | --- |
+| ![کتابخانه](docs/screenshots/library.png) | ![پنل هایلایت‌ها](docs/screenshots/reader-highlights.png) |
+| **تم شب (Midnight)** | **خواندن PDF** |
+| ![تم تیره](docs/screenshots/reader-dark.png) | ![خواندن PDF](docs/screenshots/reader-pdf.png) |
+
+<p align="center"><img src="docs/screenshots/mobile-reader.png" alt="محیط مطالعه در موبایل" width="300"></p>
+
 ---
 
 ## 📲 نصب‌کننده‌های یک‌کلیکی برنامه (One-Click App Installers)

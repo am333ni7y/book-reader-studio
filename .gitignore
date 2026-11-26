@@ -12,3 +12,7 @@ android/capacitor-cordova-android-plugins/
 .env
 .DS_Store
 *.log
+android/app/release-key.keystore
+*.keystore
+*.jks
+.claude/

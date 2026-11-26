@@ -158,9 +158,10 @@ async function main() {
       port,
       dataDir,
       obsidianDir,
-      onReady: () => {
+      onReady: (info) => {
         if (flags.open) {
-          openBrowser(`http://127.0.0.1:${port}`);
+          const tokenSuffix = info.token ? `/?token=${encodeURIComponent(info.token)}` : '';
+          openBrowser(`http://127.0.0.1:${info.port}${tokenSuffix}`);
         }
       },
     });

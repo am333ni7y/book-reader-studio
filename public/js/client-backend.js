@@ -1,5 +1,5 @@
 // Pure Browser IndexedDB Backend for Android APK & Standalone Offline WebView
-import { buildObsidianMarkdown, sanitizeFilename } from './obsidian-markdown.js';
+import { buildObsidianNote, obsidianFilename } from './obsidian-markdown.js';
 import {
   parseClientEpubSummary,
   getClientEpubManifest,
@@ -90,6 +90,26 @@ function cleanBookTitle(filename) {
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim() || 'کتاب بدون عنوان';
+}
+
+// ---- Library backup: same format and matching rules as server.mjs (keep both in sync) ----
+const BACKUP_FORMAT = 'ketabkhan-backup';
+const BACKUP_VERSION = 1;
+const BACKUP_BOOK_FIELDS = [
+  'id', 'title', 'author', 'format', 'filename', 'file_size', 'total_pages', 'current_page',
+  'scroll_ratio', 'zoom_mode', 'zoom_scale', 'view_mode', 'page_theme', 'reading_dir',
+  'warmth', 'brightness', 'reading_seconds', 'last_opened_at',
+];
+const BACKUP_READING_FIELDS = [
+  'current_page', 'scroll_ratio', 'zoom_mode', 'zoom_scale', 'view_mode', 'page_theme',
+  'reading_dir', 'warmth', 'brightness', 'reading_seconds', 'last_opened_at',
+];
+const BACKUP_BOOKMARK_FIELDS = ['id', 'book_id', 'page', 'kind', 'label', 'category', 'color', 'note', 'created_at'];
+const BACKUP_HIGHLIGHT_FIELDS = ['id', 'book_id', 'page', 'kind', 'color', 'quote_text', 'note', 'created_at', 'updated_at'];
+const BACKUP_TOC_FIELDS = ['id', 'book_id', 'title', 'page', 'level', 'sort_order', 'created_at'];
+
+function pickFields(source, fields) {
+  return Object.fromEntries(fields.map((f) => [f, source[f] ?? null]));
 }
 
 function detectMagic(bytes) {
@@ -353,8 +373,8 @@ export const clientBackend = {
 
   async exportObsidian(bookId) {
     const full = await this.getBook(bookId);
-    const markdown = buildObsidianMarkdown(full);
-    const filename = `${sanitizeFilename(full.book.title)}.md`;
+    const markdown = buildObsidianNote(full);
+    const filename = obsidianFilename(full.book);
     const mdFile = new File([markdown], filename, { type: 'text/markdown;charset=utf-8' });
 
     if (typeof navigator.share === 'function' && navigator.canShare?.({ files: [mdFile] })) {
@@ -377,5 +397,124 @@ export const clientBackend = {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
     return { ok: true, filename, savedPath: `دانلود فایل ${filename}`, markdown };
+  },
+
+  async exportLibrary() {
+    const [books, bookmarks, highlights, tocEntries] = await Promise.all([
+      getAllFromStore('books'),
+      getAllFromStore('bookmarks'),
+      getAllFromStore('highlights'),
+      getAllFromStore('toc_entries'),
+    ]);
+    return {
+      format: BACKUP_FORMAT,
+      version: BACKUP_VERSION,
+      exported_at: new Date().toISOString(),
+      books: books.map((b) => pickFields(b, BACKUP_BOOK_FIELDS)),
+      bookmarks: bookmarks.map((b) => pickFields(b, BACKUP_BOOKMARK_FIELDS)),
+      highlights: highlights.map((h) => ({
+        ...pickFields(h, BACKUP_HIGHLIGHT_FIELDS),
+        rects: Array.isArray(h.rects) ? h.rects : [],
+      })),
+      toc_entries: tocEntries.map((t) => pickFields(t, BACKUP_TOC_FIELDS)),
+    };
+  },
+
+  async importLibrary(backup) {
+    if (!backup || typeof backup !== 'object' || backup.format !== BACKUP_FORMAT || backup.version !== BACKUP_VERSION) {
+      throw new Error('فایل پشتیبان معتبر نیست (format/version).');
+    }
+    const backupBooks = Array.isArray(backup.books) ? backup.books : [];
+    const localBooks = await getAllFromStore('books');
+    const localById = new Map(localBooks.map((b) => [b.id, b]));
+    const idMap = new Map(); // backup book id -> local book id
+    const unmatched = [];
+    let matched = 0;
+
+    for (const bb of backupBooks) {
+      const local = localById.get(bb.id)
+        || localBooks.find((b) => b.filename === bb.filename && Number(b.file_size) === Number(bb.file_size))
+        || localBooks.find((b) => b.title === bb.title && b.format === bb.format);
+      if (!local) {
+        unmatched.push(bb.title || bb.filename || bb.id);
+        continue;
+      }
+      matched += 1;
+      idMap.set(bb.id, local.id);
+      const patch = {};
+      for (const key of BACKUP_READING_FIELDS) {
+        if (bb[key] !== undefined && bb[key] !== null) patch[key] = bb[key];
+      }
+      if (Object.keys(patch).length > 0) {
+        await putRecord('books', { ...local, ...patch });
+      }
+    }
+
+    // Ids are global keys: collect them from every book, otherwise put() would silently move
+    // an annotation that already belongs to another book.
+    const existingIds = new Set();
+    for (const storeName of ['bookmarks', 'highlights', 'toc_entries']) {
+      for (const item of await getAllFromStore(storeName)) {
+        existingIds.add(item.id);
+      }
+    }
+
+    const inserted = { bookmarks: 0, highlights: 0, toc_entries: 0 };
+    const listOf = (key) => (Array.isArray(backup[key]) ? backup[key] : []);
+    const pageOf = (item) => Math.max(1, Number(item.page) || 1);
+
+    for (const bm of listOf('bookmarks')) {
+      const localId = idMap.get(bm.book_id);
+      if (!localId || !bm.id || existingIds.has(bm.id)) continue;
+      await putRecord('bookmarks', {
+        id: bm.id,
+        book_id: localId,
+        page: pageOf(bm),
+        kind: bm.kind === 'pin' ? 'pin' : 'ribbon',
+        label: String(bm.label || ''),
+        category: String(bm.category || 'کلیدی'),
+        color: String(bm.color || 'amber'),
+        note: String(bm.note || ''),
+        created_at: bm.created_at || new Date().toISOString(),
+      });
+      existingIds.add(bm.id);
+      inserted.bookmarks += 1;
+    }
+    for (const hl of listOf('highlights')) {
+      const localId = idMap.get(hl.book_id);
+      if (!localId || !hl.id || existingIds.has(hl.id)) continue;
+      const now = new Date().toISOString();
+      await putRecord('highlights', {
+        id: hl.id,
+        book_id: localId,
+        page: pageOf(hl),
+        kind: hl.kind === 'area' ? 'area' : 'text',
+        color: String(hl.color || 'amber'),
+        quote_text: String(hl.quote_text || ''),
+        note: String(hl.note || ''),
+        rects: Array.isArray(hl.rects) ? hl.rects : [],
+        created_at: hl.created_at || now,
+        updated_at: hl.updated_at || hl.created_at || now,
+      });
+      existingIds.add(hl.id);
+      inserted.highlights += 1;
+    }
+    for (const t of listOf('toc_entries')) {
+      const localId = idMap.get(t.book_id);
+      if (!localId || !t.id || existingIds.has(t.id)) continue;
+      await putRecord('toc_entries', {
+        id: t.id,
+        book_id: localId,
+        title: String(t.title || '').trim(),
+        page: pageOf(t),
+        level: Number(t.level) || 0,
+        sort_order: Number(t.sort_order) || 0,
+        created_at: t.created_at || new Date().toISOString(),
+      });
+      existingIds.add(t.id);
+      inserted.toc_entries += 1;
+    }
+
+    return { ok: true, matched, unmatched, inserted };
   },
 };

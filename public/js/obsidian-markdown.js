@@ -1,3 +1,9 @@
+// Single source of truth for Obsidian note generation.
+// Pure ES module: no DOM, no Node imports. Used by server.mjs (Node) and public/js/client-backend.js (browser).
+
+export const OBSIDIAN_START = '<!-- ketabkhan:start -->';
+export const OBSIDIAN_END = '<!-- ketabkhan:end -->';
+
 export function sanitizeFilename(name) {
   return String(name || 'book')
     .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
@@ -5,7 +11,40 @@ export function sanitizeFilename(name) {
     .trim() || 'book';
 }
 
-export function buildObsidianMarkdown({ book, bookmarks = [], highlights = [], tocEntries = [] }) {
+// Unique per book: two books with the same title get different names via the id prefix.
+export function obsidianFilename(book) {
+  return `${sanitizeFilename(book.title)} - ${String(book.id).slice(0, 8)}.md`;
+}
+
+// Escapes a value for a double-quoted YAML scalar on a single line.
+function yamlString(value) {
+  return String(value ?? '').replace(/\r\n|\r|\n/g, ' ').replace(/"/g, '\\"');
+}
+
+// Merges a freshly generated note into an existing file, keeping user text outside the managed block.
+export function mergeObsidianNote(existingText, newFrontmatter, newBody) {
+  const existing = typeof existingText === 'string' ? existingText : '';
+  const bodyText = String(newBody || '');
+  const block = `${OBSIDIAN_START}\n${bodyText}${bodyText.endsWith('\n') ? '' : '\n'}${OBSIDIAN_END}`;
+  const startIdx = existing.indexOf(OBSIDIAN_START);
+  const endIdx = existing.indexOf(OBSIDIAN_END);
+  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) {
+    return `${newFrontmatter}${block}\n`;
+  }
+  const fmMatch = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(existing);
+  let fmEnd = fmMatch ? fmMatch[0].length : 0;
+  if (fmEnd > startIdx) fmEnd = 0;
+  const userBefore = existing.slice(fmEnd, startIdx);
+  const userAfter = existing.slice(endIdx + OBSIDIAN_END.length);
+  return `${newFrontmatter}${userBefore}${block}${userAfter}`;
+}
+
+// data: { book, bookmarks, highlights, tocEntries } (the shape returned by getBookFull / getBook).
+export function buildObsidianParts(data) {
+  const { book } = data;
+  const bookmarks = data.bookmarks || [];
+  const highlights = data.highlights || [];
+  const tocEntries = data.tocEntries || [];
   const isEpub = book.format === 'epub';
   const unitLabel = isEpub ? 'فصل' : 'صفحه';
   const pct = book.total_pages > 0 ? Math.round((book.current_page / book.total_pages) * 100) : 0;
@@ -18,24 +57,27 @@ export function buildObsidianMarkdown({ book, bookmarks = [], highlights = [], t
     lavender: '🟣 ایده / پرسش (Lavender)',
   };
 
-  const lines = [
+  const frontmatterLines = [
     '---',
-    `title: "${(book.title || '').replace(/"/g, '\\"')}"`,
-    `author: "${(book.author || '').replace(/"/g, '\\"')}"`,
+    `title: "${yamlString(book.title)}"`,
+    `author: "${yamlString(book.author)}"`,
     `format: "${book.format || 'pdf'}"`,
     `total_${isEpub ? 'chapters' : 'pages'}: ${book.total_pages || 0}`,
     `current_${isEpub ? 'chapter' : 'page'}: ${book.current_page || 1}`,
     `progress: "${pct}%"`,
     `reading_minutes: ${readingMins}`,
-    `last_read: "${book.last_opened_at || new Date().toISOString()}"`,
+    `last_read: "${book.last_opened_at}"`,
     'tags:',
     '  - reading-notes',
     '  - book-reader-studio',
     '---',
+  ];
+
+  const lines = [
     '',
     `# ${book.title}`,
     '',
-    `- **پیشرفت مطالعه:** ${unitLabel} ${book.current_page || 1} از ${book.total_pages || '?'} (${pct}%)`,
+    `- **پیشرفت مطالعه:** ${unitLabel} ${book.current_page} از ${book.total_pages || '?'} (${pct}%)`,
     `- **مدت مطالعه ثبت‌شده:** ${readingMins} دقیقه`,
     '',
   ];
@@ -89,5 +131,14 @@ export function buildObsidianMarkdown({ book, bookmarks = [], highlights = [], t
     }
   }
 
-  return lines.join('\n');
+  return {
+    frontmatter: `${frontmatterLines.join('\n')}\n`,
+    body: lines.join('\n'),
+  };
+}
+
+// Full note text for a book that has no existing file (what the server writes on a first export).
+export function buildObsidianNote(data) {
+  const { frontmatter, body } = buildObsidianParts(data);
+  return mergeObsidianNote('', frontmatter, body);
 }

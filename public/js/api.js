@@ -205,4 +205,16 @@ export const api = {
       ? request(`/api/books/${encodeURIComponent(bookId)}/export-obsidian`, { method: 'POST' })
       : clientBackend.exportObsidian(bookId);
   },
+
+  // Returns the backup object (both backends). app.js turns it into a download.
+  async exportLibrary() {
+    return (await isServerAvailable()) ? request('/api/library/export') : clientBackend.exportLibrary();
+  },
+
+  // Restores annotations and reading state from a backup object. Resolves { ok, matched, unmatched, inserted }.
+  async importLibrary(backup) {
+    return (await isServerAvailable())
+      ? request('/api/library/import', { method: 'POST', body: JSON.stringify(backup) })
+      : clientBackend.importLibrary(backup);
+  },
 };

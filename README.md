@@ -37,7 +37,7 @@ Most self-hosted readers either require Docker/PostgreSQL stacks or struggle wit
 
 ---
 
-### 📲 One-Click App Installers (Zero Terminal / No Coding Required)
+### 📲 One-Click App Installers
 
 Download the installer for your device from [**GitHub Releases**](https://github.com/am333ni7y/book-reader-studio/releases/latest) and open it directly by clicking the app icon:
 
@@ -46,6 +46,11 @@ Download the installer for your device from [**GitHub Releases**](https://github
 | **macOS (Apple Silicon & Intel)** | `Ketabkhan-Studio-macOS-AppleSilicon.dmg` / `Ketabkhan-Studio-macOS-Intel.dmg` | Drag **Ketabkhan Studio** to **Applications** and double-click the icon. |
 | **Windows (10 / 11)** | `Ketabkhan-Studio-Windows-Setup.exe` (or `Portable.exe`) | Run installer, then double-click **Ketabkhan Studio** on Desktop / Start Menu. |
 | **Android (APK)** | `Ketabkhan-Studio-Android.apk` | Tap the APK to install, then tap the **کتاب‌خان استودیو** icon on your Home Screen (100% offline!). |
+
+**Installer notes**
+- **Windows:** builds are not code-signed yet. SmartScreen may show "Windows protected your PC". Click **More info**, then **Run anyway**.
+- **macOS:** builds are not signed or notarized. Right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine "/Applications/Ketabkhan Studio.app"` in Terminal.
+- **Android (upgrading from v3.0.0):** v3.0.0 was signed with a temporary key, so the next version cannot install over it. Export your notes first (Obsidian export), uninstall v3.0.0, then install the new APK. Highlights and bookmarks stored inside the app are removed with it.
 
 ---
 
@@ -89,7 +94,9 @@ Start the server on your Mac/Windows machine with `--lan`:
 ```bash
 ketabkhan --lan
 ```
-Open the printed LAN URL (e.g., `http://192.168.1.25:3847`) in Chrome on Android and tap **Install App** / **Add to Home Screen**.
+LAN mode requires a token. `ketabkhan --lan` prints a URL ending in `?token=...`. Open that exact URL once on the phone; a cookie is then set, so you do not need it again. To keep the same token across restarts, set the `KETABKHAN_TOKEN` environment variable.
+
+Then open the printed LAN URL (e.g., `http://192.168.1.25:3847/?token=...`) in Chrome on Android and tap **Install App** / **Add to Home Screen**.
 
 ---
 
@@ -110,6 +117,7 @@ Open the printed LAN URL (e.g., `http://192.168.1.25:3847`) in Chrome on Android
 - `HOST`: Bind host (default: `127.0.0.1`)
 - `KETABKHAN_DATA_DIR`: Custom directory for `library.sqlite` and uploaded books
 - `OBSIDIAN_NOTES_DIR`: Target directory for 1-click Obsidian Markdown exports (defaults to `~/Documents/Ketabkhan-Notes`)
+- `KETABKHAN_TOKEN`: Fixed access token for `--lan` mode. If unset, a new token is generated at each start and printed in the URL.
 
 ### Keyboard Shortcuts
 - `B`: Toggle quick ribbon bookmark
@@ -148,7 +156,7 @@ Open the printed LAN URL (e.g., `http://192.168.1.25:3847`) in Chrome on Android
 
 ---
 
-### 📲 نصب اپلیکیشن با یک کلیک (بدون نیاز به کد و ترمینال)
+### 📲 نصب‌کننده‌های یک‌کلیکی برنامه (One-Click App Installers)
 
 فایل نصبی مخصوص دستگاه خود را از صفحه [**GitHub Releases**](https://github.com/am333ni7y/book-reader-studio/releases/latest) دانلود کنید و فقط با کلیک روی آیکون برنامه آن را باز کنید:
 
@@ -157,6 +165,11 @@ Open the printed LAN URL (e.g., `http://192.168.1.25:3847`) in Chrome on Android
 | **مک (macOS)** | `Ketabkhan-Studio-macOS-AppleSilicon.dmg` / `Intel.dmg` | برنامه **Ketabkhan Studio** را به پوشه Applications بکشید و روی آیکون آن دابل‌کلیک کنید. |
 | **ویندوز (Windows 10/11)** | `Ketabkhan-Studio-Windows-Setup.exe` یا `Portable.exe` | فایل را اجرا کنید و سپس روی آیکون **Ketabkhan Studio** در دسکتاپ یا منوی استارت کلیک کنید. |
 | **اندروید (Android APK)** | `Ketabkhan-Studio-Android.apk` | فایل APK را روی گوشی نصب کنید و آیکون **کتاب‌خان استودیو** را لمس کنید (کاملاً آفلاین!). |
+
+**یادداشت‌های نصب**
+- **ویندوز:** فایل‌های ویندوز هنوز امضای دیجیتال ندارند. ممکن است SmartScreen پیام «Windows protected your PC» را نشان دهد. روی **More info** و سپس **Run anyway** کلیک کنید.
+- **مک:** فایل‌های مک امضا و notarize نشده‌اند. روی برنامه راست‌کلیک کنید و **Open** را بزنید، یا در ترمینال این دستور را اجرا کنید: `xattr -dr com.apple.quarantine "/Applications/Ketabkhan Studio.app"`
+- **اندروید (ارتقا از v3.0.0):** نسخه v3.0.0 با یک کلید موقت امضا شده، بنابراین نسخه بعدی روی آن نصب نمی‌شود. ابتدا یادداشت‌ها را با خروجی Obsidian ذخیره کنید، سپس v3.0.0 را حذف و APK جدید را نصب کنید. هایلایت‌ها و بوکمارک‌های داخل برنامه با حذف آن از بین می‌روند.
 
 ---
 
@@ -200,7 +213,9 @@ ketabkhan --open
 ```bash
 ketabkhan --lan
 ```
-آدرس شبکه نمایش‌داده‌شده (مثلاً `http://192.168.1.25:3847`) را در مرورگر کروم گوشی باز کنید و گزینه **نصب اپلیکیشن / Add to Home Screen** را بزنید.
+حالت LAN به توکن نیاز دارد: دستور بالا آدرسی چاپ می‌کند که با `?token=...` تمام می‌شود. همین آدرس دقیق را یک بار در مرورگر کروم گوشی باز کنید؛ پس از آن کوکی ذخیره می‌شود و دیگر لازم نیست. برای ثابت ماندن توکن بین اجراها، متغیر محیطی `KETABKHAN_TOKEN` را تنظیم کنید.
+
+سپس آدرس نمایش‌داده‌شده (مثلاً `http://192.168.1.25:3847/?token=...`) را باز کنید و گزینه **نصب اپلیکیشن / Add to Home Screen** را بزنید.
 
 ---
 

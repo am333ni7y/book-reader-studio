@@ -1,5 +1,6 @@
 // Single source of truth for Obsidian note generation.
 // Pure ES module: no DOM, no Node imports. Used by server.mjs (Node) and public/js/client-backend.js (browser).
+import { inkStrokes, inkAnchor, inkPageAspect, cropInk, inkToSvg } from './ink-core.js';
 
 export const OBSIDIAN_START = '<!-- ketabkhan:start -->';
 export const OBSIDIAN_END = '<!-- ketabkhan:end -->';
@@ -116,6 +117,10 @@ export function buildObsidianParts(data) {
         lines.push(`### ${unitLabel} ${hl.page}`, '');
         lastPage = hl.page;
       }
+      if (hl.kind === 'ink') {
+        lines.push(...inkNoteLines(hl, unitLabel), '');
+        continue;
+      }
       const badge = colorLabels[hl.color] || hl.color;
       const modeTag = hl.kind === 'area' ? ' `[ناحیه‌ای]`' : '';
       if (hl.quote_text && hl.quote_text.trim()) {
@@ -136,6 +141,32 @@ export function buildObsidianParts(data) {
     body: lines.join('\n'),
   };
 }
+
+// A handwritten note becomes an inline SVG (Obsidian renders raw SVG in reading view) plus a text line,
+// so the note stays findable even where SVG is not rendered.
+function inkNoteLines(hl, unitLabel) {
+  const strokes = inkStrokes(hl.rects);
+  const anchor = inkAnchor(hl.rects);
+  const lines = [];
+  const where = anchor ? `کنار متن در ${unitLabel} ${hl.page}` : `روی ${unitLabel} ${hl.page}`;
+  lines.push(`- ✍️ **یادداشت دست‌نویس** (${where}، ${strokes.length} خط)`);
+  if (hl.quote_text && hl.quote_text.trim()) {
+    lines.push(`  - متن کنار آن: «${hl.quote_text.trim().replace(/s+/g, ' ')}»`);
+  }
+  if (hl.note && hl.note.trim()) lines.push(`  - **یادداشت:** ${hl.note.trim()}`);
+  if (strokes.length > 0) {
+    const { strokes: cropped, aspect } = anchor
+      ? { strokes, aspect: anchor.aspect }
+      : cropInk(strokes, inkPageAspect(hl.rects));
+    const svg = inkToSvg(cropped, { aspect, width: 480 })
+      .replace('<svg ', `<svg width="${Math.max(80, Math.min(480, Math.round(320 / Math.max(aspect, 0.05))))}" style="max-width:100%;height:auto;background:#fffdf7;border:1px solid #e5dfd3;border-radius:6px" `);
+    lines.push('', svg);
+  } else {
+    lines.push('  - _[یادداشت دست‌نویس خالی]_');
+  }
+  return lines;
+}
+
 
 // Full note text for a book that has no existing file (what the server writes on a first export).
 export function buildObsidianNote(data) {

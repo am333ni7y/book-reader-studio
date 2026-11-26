@@ -163,6 +163,9 @@
           <button type="button" id="btn-ribbon-bookmark" class="btn btn-icon" aria-pressed="false" aria-label="بوکمارک سریع صفحه (B)" title="بوکمارک سریع صفحه (B)">
             <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
           </button>
+          <button type="button" id="btn-pen-mode" class="btn btn-icon" aria-pressed="true" aria-label="ابزار قلم (S Pen)" title="ابزار قلم: قلم می‌نویسد، انگشت اسکرول می‌کند" hidden>
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+          </button>
           <button type="button" id="btn-pin-page" class="btn btn-icon" aria-label="نشان‌گذاری ویژه صفحه خاص (P)" title="نشان‌گذاری ویژه صفحه (P)">
             <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
           </button>
@@ -269,6 +272,45 @@
     <button type="button" id="btn-sel-copy" class="btn btn-xs btn-secondary">کپی</button>
   </div>
 
+  <!-- Floating S Pen toolbar: shown once a pen (pointerType "pen") is seen -->
+  <div id="pen-toolbar" class="pen-toolbar" hidden role="toolbar" aria-label="ابزار قلم">
+    <div class="pen-group" role="group" aria-label="ابزار">
+      <button type="button" class="pen-btn" data-pen-tool="highlight" aria-pressed="false">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+        <span>هایلایت</span>
+      </button>
+      <button type="button" class="pen-btn" data-pen-tool="ink" aria-pressed="false">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        <span>دست‌نویس</span>
+      </button>
+      <button type="button" class="pen-btn" data-pen-tool="eraser" aria-pressed="false">
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="m7 21-4.3-4.3a1 1 0 0 1 0-1.4l9.6-9.6a1 1 0 0 1 1.4 0l5.6 5.6a1 1 0 0 1 0 1.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+        <span>پاک‌کن</span>
+      </button>
+    </div>
+    <span class="pen-sep" aria-hidden="true"></span>
+    <div class="pen-group" role="group" aria-label="ضخامت">
+      <button type="button" class="pen-size" data-pen-size="s" aria-pressed="false" aria-label="ریز"><i style="--d:5px"></i></button>
+      <button type="button" class="pen-size" data-pen-size="m" aria-pressed="false" aria-label="متوسط"><i style="--d:9px"></i></button>
+      <button type="button" class="pen-size" data-pen-size="l" aria-pressed="false" aria-label="درشت"><i style="--d:14px"></i></button>
+    </div>
+    <span class="pen-sep" aria-hidden="true"></span>
+    <div class="pen-group pen-colors" role="group" aria-label="رنگ هایلایت" data-colors-for="highlight">
+      <button type="button" class="hl-swatch swatch-amber" data-pen-hl-color="amber" aria-label="زرد"></button>
+      <button type="button" class="hl-swatch swatch-sage" data-pen-hl-color="sage" aria-label="سبز"></button>
+      <button type="button" class="hl-swatch swatch-sky" data-pen-hl-color="sky" aria-label="آبی"></button>
+      <button type="button" class="hl-swatch swatch-coral" data-pen-hl-color="coral" aria-label="مرجانی"></button>
+      <button type="button" class="hl-swatch swatch-lavender" data-pen-hl-color="lavender" aria-label="بنفش"></button>
+    </div>
+    <div class="pen-group pen-colors" role="group" aria-label="رنگ جوهر" data-colors-for="ink" hidden>
+      <button type="button" class="hl-swatch swatch-black" data-pen-ink-color="black" aria-label="مشکی"></button>
+      <button type="button" class="hl-swatch swatch-blue" data-pen-ink-color="blue" aria-label="آبی"></button>
+      <button type="button" class="hl-swatch swatch-red" data-pen-ink-color="red" aria-label="قرمز"></button>
+    </div>
+    <button type="button" id="btn-pen-close" class="pen-btn pen-close" aria-label="خاموش کردن ابزار قلم" title="خاموش کردن ابزار قلم (از نوار بالا دوباره روشن می‌شود)">✕</button>
+    <p class="pen-hint" id="pen-hint" aria-live="polite"></p>
+  </div>
+
   <!-- ==================== POPOVERS & DIALOGS ==================== -->
 
   <!-- Appearance & Readability Popover -->
@@ -373,6 +415,40 @@
         <button type="button" id="btn-delete-highlight" class="btn btn-danger" hidden>حذف هایلایت</button>
         <div class="dialog-footer-spacer"></div>
         <button type="button" class="btn btn-secondary" data-close-dialog="highlight-note-dialog">بستن</button>
+        <button type="submit" class="btn btn-primary">ذخیره</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <!-- Handwritten note card (EPUB ink: anchored to a text position, shown in the margin) -->
+  <dialog id="ink-card-dialog" aria-labelledby="inkCardTitle" class="modal-dialog ink-card-dialog">
+    <form id="ink-card-form" method="dialog" class="dialog-form">
+      <header class="dialog-header">
+        <h3 id="inkCardTitle">یادداشت دست‌نویس</h3>
+        <button type="button" class="btn btn-icon dialog-close" data-close-dialog="ink-card-dialog" aria-label="بستن">✕</button>
+      </header>
+      <div class="dialog-body">
+        <blockquote id="ink-card-quote" dir="auto" class="hl-quote-preview" hidden></blockquote>
+        <div id="ink-card-pad" class="ink-pad" aria-label="محل نوشتن با قلم"></div>
+        <div class="ink-card-tools">
+          <div class="swatch-row" role="group" aria-label="رنگ جوهر">
+            <button type="button" class="hl-swatch swatch-black" data-card-ink-color="black" aria-label="مشکی"></button>
+            <button type="button" class="hl-swatch swatch-blue" data-card-ink-color="blue" aria-label="آبی"></button>
+            <button type="button" class="hl-swatch swatch-red" data-card-ink-color="red" aria-label="قرمز"></button>
+          </div>
+          <div class="swatch-row" role="group" aria-label="ضخامت">
+            <button type="button" class="pen-size" data-card-size="s" aria-label="ریز"><i style="--d:5px"></i></button>
+            <button type="button" class="pen-size" data-card-size="m" aria-label="متوسط"><i style="--d:9px"></i></button>
+            <button type="button" class="pen-size" data-card-size="l" aria-label="درشت"><i style="--d:14px"></i></button>
+          </div>
+          <button type="button" id="btn-ink-card-eraser" class="btn btn-xs btn-secondary" aria-pressed="false">پاک‌کن</button>
+          <button type="button" id="btn-ink-card-undo" class="btn btn-xs btn-secondary">واگرد</button>
+        </div>
+      </div>
+      <footer class="dialog-footer">
+        <button type="button" id="btn-delete-ink-card" class="btn btn-danger" hidden>حذف یادداشت</button>
+        <div class="dialog-footer-spacer"></div>
+        <button type="button" class="btn btn-secondary" data-close-dialog="ink-card-dialog">انصراف</button>
         <button type="submit" class="btn btn-primary">ذخیره</button>
       </footer>
     </form>

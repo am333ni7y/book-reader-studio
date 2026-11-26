@@ -28,7 +28,8 @@ Ketabkhan Studio (book-reader-studio): Ameeen's own local-first PDF + EPUB reade
 - 2026-11-26: permanent Android keystore created (PKCS12 via openssl, alias `ketabkhan`, RSA 4096, valid to 2054, cert SHA256 `9E:51:2B:BB:…:DC:57`). Stored as DPAPI `book-reader-studio-android-keystore-b64`, `-keystore-password`, `-key-password`, `-key-alias` + vault `secrets/book-reader-studio.json`; the 4 GitHub secrets are set.
 - 2026-11-26: v3.1.0 released (all 5 assets; APK signed with the permanent key). EPUB parsers unified: shared pure core `public/js/epub-core.js` (ZIP directory, OPF/nav/NCX, sanitizer, CSS scoping, search); `lib/epub-parser.mjs` (fd + zlib) and `public/js/epub-client.js` (Blob + DecompressionStream) are thin adapters. README screenshots in `docs/screenshots/` (Iminify-compressed).
 - 2026-11-26: S Pen support merged to main (PR #4, `ed67c88`), not yet released (next tag v3.2.0 waits for Ameeen). Needs Ameeen's test on a real Galaxy Ultra: checklist at the end of ADR 0006.
-- Open: code signing for Windows/macOS; Android client path only tested in Node/desktop browser, not in a real WebView.
+- 2026-11-26: optional code signing wired into `release-apps.yml` (ADR 0007, `docs/RELEASING.md` §6): Windows Azure Artifact Signing > PFX > SignPath > unsigned; macOS Developer ID + notarization (API key or Apple ID). Without secrets it builds unsigned as before. No certificate yet: Ameeen must pick a provider and pass identity validation; signed paths are untested until then.
+- Open: get a signing provider (SignPath Foundation / Certum for Windows, Apple Developer for macOS); Android client path only tested in Node/desktop browser, not in a real WebView.
 
 ## Gotchas
 - Three persistence backends (SQLite, JSON, IndexedDB); backup import/matching logic is duplicated in `server.mjs` and `client-backend.js` (keep in sync).

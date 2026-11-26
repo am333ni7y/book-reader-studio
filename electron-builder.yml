@@ -24,6 +24,10 @@ fileAssociations:
 mac:
   icon: build/icon.icns
   category: public.app-category.books
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   target:
     - dmg
     - zip

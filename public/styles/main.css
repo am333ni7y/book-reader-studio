@@ -1378,3 +1378,208 @@ mark.epub-hl.hl-lavender { background: var(--hl-lavender); }
     flex: 0 1 150px;
   }
 }
+
+/* ==================== S PEN: input model, ink, toolbar ==================== */
+/* Pen hovering: the pen writes, so the page must not pan under it (touch-action is fixed at pointerdown). */
+.pdf-viewport.pen-near,
+.pdf-viewport.pen-near .pdf-page-shell,
+.pdf-viewport.pen-near .textLayer,
+.pdf-viewport.pen-near .epub-chapter-body {
+  touch-action: none;
+}
+.pdf-viewport.pen-drawing {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: crosshair;
+}
+/* Caret hit-testing must reach the text under the pen, not overlays. */
+.pdf-viewport.pen-drawing .hl-rect,
+.pdf-viewport.pen-drawing .ink-svg path {
+  pointer-events: none;
+}
+.pdf-viewport.pen-drawing .textLayer {
+  pointer-events: auto;
+}
+
+.ink-svg,
+.ink-live {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.ink-live { z-index: 6; }
+.pdf-annotation-layer .ink-svg path {
+  pointer-events: visiblePainted;
+  cursor: pointer;
+}
+.pdf-viewport[data-page-theme="smart-dark"] .ink-svg,
+.pdf-viewport[data-page-theme="midnight"] .ink-svg {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.pen-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  pointer-events: none;
+}
+.pen-preview-rect {
+  position: fixed;
+  border-radius: 3px;
+  mix-blend-mode: multiply;
+}
+.pen-preview-rect.hl-amber { background: var(--hl-amber); }
+.pen-preview-rect.hl-sage { background: var(--hl-sage); }
+.pen-preview-rect.hl-sky { background: var(--hl-sky); }
+.pen-preview-rect.hl-coral { background: var(--hl-coral); }
+.pen-preview-rect.hl-lavender { background: var(--hl-lavender); }
+.pen-preview-rect.is-area { border: 1.5px dashed var(--accent); }
+
+.swatch-black { background: #1f1d1a; }
+.swatch-blue { background: #1d4ed8; }
+.swatch-red { background: #dc2626; }
+
+.pen-toolbar {
+  position: fixed;
+  z-index: 58;
+  inset-inline: 0;
+  bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  margin-inline: auto;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-md);
+  direction: rtl;
+}
+.pen-toolbar[hidden] { display: none; }
+.pen-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.pen-group[hidden] { display: none; }
+.pen-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border-subtle);
+}
+.pen-btn {
+  min-width: 48px;
+  min-height: 48px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0.2rem 0.45rem;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+.pen-btn[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.pen-close { min-width: 40px; font-size: 1rem; }
+.pen-size {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+.pen-size i {
+  display: block;
+  width: var(--d);
+  height: var(--d);
+  border-radius: 99px;
+  background: var(--text-primary);
+}
+.pen-size[aria-pressed="true"] { background: var(--accent-soft); }
+.pen-toolbar .hl-swatch,
+.ink-card-tools .hl-swatch {
+  width: 30px;
+  height: 30px;
+}
+.pen-hint {
+  flex-basis: 100%;
+  margin: 0;
+  text-align: center;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.pen-hint:empty { display: none; }
+/* Room below the last page for the toolbar; on the container, not the viewport, so the viewport
+   ResizeObserver (fit-width re-layout) is not triggered when the toolbar appears. */
+body.has-pen-toolbar .pdf-pages-container {
+  margin-bottom: 6rem;
+}
+
+/* EPUB handwritten note markers in the margin */
+.ink-marker {
+  position: absolute;
+  inset-inline-start: 2px;
+  z-index: 4;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 99px;
+  border: 1.5px solid var(--ink-marker-color, #1f1d1a);
+  background: #fffdf7;
+  color: var(--ink-marker-color, #1f1d1a);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+
+.ink-card-dialog { width: min(560px, calc(100vw - 16px)); }
+.ink-pad {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 0.62;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background:
+    repeating-linear-gradient(to bottom, transparent 0 31px, rgba(154, 91, 19, 0.14) 31px 32px),
+    #fffdf7;
+  touch-action: none;
+  cursor: crosshair;
+  overflow: hidden;
+}
+.ink-card-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+.ink-card-tools .pen-size { width: 36px; height: 36px; }
+.ink-thumb {
+  display: block;
+  width: 100%;
+  max-height: 120px;
+  margin-top: 0.35rem;
+  border-radius: 6px;
+  background: #fffdf7;
+  border: 1px solid var(--border-subtle);
+}

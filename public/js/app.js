@@ -1,8 +1,10 @@
 import { api } from './api.js';
 import { PdfEngine } from './pdf-engine.js';
 import { EpubEngine } from './epub-engine.js';
-import { AnnotationManager } from './annotations.js';
+import { AnnotationManager, buildInkSvg } from './annotations.js';
 import { formatFaNum } from './bilingual-text.js';
+import { PenController, InkPad } from './pen-input.js';
+import { inkStrokes, inkAnchor, inkPageAspect, cropInk, INK_WIDTHS, EPUB_CARD_ASPECT } from './ink-core.js';
 
 // Conditional Polyfills per Modern Web Guidance
 if (!Object.hasOwn(HTMLElement.prototype, 'popover')) {
@@ -151,6 +153,7 @@ const annotations = new AnnotationManager({
     notify('هایلایت ذخیره شد.');
   },
   onOpenHighlightDialog: (ctx) => openHighlightDialog(ctx),
+  onOpenInkCard: (ctx) => openInkCard(ctx),
   onCopyText: async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -186,6 +189,246 @@ function getUnitLabel() {
 function rerenderPageOverlay(pageNum) {
   const shell = getEngine().pageShells.get(pageNum);
   if (shell) annotations.renderPageOverlays(pageNum, shell);
+}
+
+// ==================== S PEN (pen writes, finger scrolls) ====================
+const INK_GROUP_MS = 3 * 60 * 1000; // strokes on one page within 3 min of each other form one ink note
+const penToolbarEl = document.getElementById('pen-toolbar');
+const penHintEl = document.getElementById('pen-hint');
+const btnPenMode = document.getElementById('btn-pen-mode');
+let pendingInkSeq = 0;
+let inkSaveChain = Promise.resolve();
+
+function refreshAnnotations(page) {
+  annotations.setData({ highlights: state.highlights, bookmarks: state.bookmarks });
+  if (page) rerenderPageOverlay(page);
+  renderHighlightsSidebar();
+}
+
+// Serialized saves: a stroke never races the create of the note it belongs to.
+function queueInkSave(hl) {
+  clearTimeout(hl._saveTimer);
+  hl._saveTimer = setTimeout(() => {
+    inkSaveChain = inkSaveChain.then(() => saveInkHighlight(hl)).catch((err) => {
+      notify(`ذخیره یادداشت دست‌نویس ناموفق بود: ${err.message}`);
+    });
+  }, 500);
+}
+
+async function saveInkHighlight(hl) {
+  const snapshot = hl.rects;
+  const isPending = String(hl.id).startsWith('pending-');
+  if (hl._deleted) {
+    if (!isPending) await api.deleteHighlight(hl.id);
+    return;
+  }
+  if (isPending) {
+    const { highlight } = await api.createHighlight(hl.book_id, {
+      page: hl.page, kind: 'ink', color: hl.color, quote_text: hl.quote_text, note: hl.note, rects: snapshot,
+    });
+    hl.id = highlight.id;
+    hl.created_at = highlight.created_at;
+  } else {
+    await api.updateHighlight(hl.id, { rects: snapshot });
+  }
+  if (hl.rects !== snapshot && !hl._deleted) queueInkSave(hl); // strokes added while saving
+  else if (hl._deleted) await saveInkHighlight(hl);
+}
+
+function setInkStrokes(hl, strokes) {
+  const meta = hl.rects?.[0]?.mode ? [hl.rects[0]] : [];
+  hl.rects = [...meta, ...strokes];
+  hl.updated_at = new Date().toISOString();
+  if (strokes.length === 0) {
+    hl._deleted = true;
+    state.highlights = state.highlights.filter((h) => h !== hl);
+  }
+}
+
+const pen = new PenController({
+  viewportEl: el.pdfViewport,
+  annotations,
+  hooks: {
+    getHighlights: () => state.highlights,
+    createHighlight: (payload) => annotations.onCreateHighlight(payload),
+    commitPdfStroke(page, stroke, aspect) {
+      if (!state.activeBook) return;
+      const now = Date.now();
+      let hl = state.highlights.findLast((h) => h.kind === 'ink' && h.page === page && !inkAnchor(h.rects)
+        && now - Date.parse(h.updated_at || h.created_at || 0) < INK_GROUP_MS);
+      if (hl) {
+        setInkStrokes(hl, [...inkStrokes(hl.rects), stroke]);
+      } else {
+        const iso = new Date().toISOString();
+        hl = {
+          id: `pending-${++pendingInkSeq}`,
+          book_id: state.activeBook.id,
+          page,
+          kind: 'ink',
+          color: stroke.color,
+          quote_text: '',
+          note: '',
+          rects: [{ mode: 'page', aspect: Math.round(aspect * 10000) / 10000 }, stroke],
+          created_at: iso,
+          updated_at: iso,
+        };
+        state.highlights.push(hl);
+      }
+      refreshAnnotations(page);
+      queueInkSave(hl);
+    },
+    eraseStrokes(erased, { final }) {
+      const pages = new Set();
+      for (const [hl, strokes] of erased) {
+        if (inkStrokes(hl.rects).length !== strokes.length) setInkStrokes(hl, strokes);
+        pages.add(hl.page);
+        if (final) queueInkSave(hl);
+      }
+      for (const p of pages) refreshAnnotations(p);
+    },
+    openInkCard: ({ page, anchor, quote_text }) => openInkCard({ draft: { page, anchor, quote_text } }),
+    onPenDetected: () => {
+      btnPenMode.hidden = false;
+      syncPenToolbar();
+    },
+    onToolChange: () => syncPenToolbar(),
+  },
+});
+
+const PEN_HINTS = {
+  highlight: 'قلم را روی متن بکشید تا هایلایت شود. دکمه کناری قلم را نگه دارید تا پاک‌کن شود.',
+  ink: 'روی PDF مستقیم بنویسید؛ در EPUB روی متن بزنید تا کارت یادداشت دست‌نویس باز شود.',
+  eraser: 'روی خط‌های دست‌نویس بکشید تا پاک شوند.',
+};
+
+function syncPenToolbar() {
+  const show = pen.penDetected && pen.enabled && !el.readerView.hidden;
+  penToolbarEl.hidden = !show;
+  document.body.classList.toggle('has-pen-toolbar', show);
+  btnPenMode.setAttribute('aria-pressed', String(pen.enabled));
+  const { tool, size, hlColor, inkColor } = pen.prefs;
+  penToolbarEl.querySelectorAll('[data-pen-tool]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.penTool === tool)));
+  penToolbarEl.querySelectorAll('[data-pen-size]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.penSize === size)));
+  penToolbarEl.querySelectorAll('[data-pen-hl-color]').forEach((b) => b.classList.toggle('is-selected', b.dataset.penHlColor === hlColor));
+  penToolbarEl.querySelectorAll('[data-pen-ink-color]').forEach((b) => b.classList.toggle('is-selected', b.dataset.penInkColor === inkColor));
+  penToolbarEl.querySelector('[data-colors-for="highlight"]').hidden = tool !== 'highlight';
+  penToolbarEl.querySelector('[data-colors-for="ink"]').hidden = tool !== 'ink';
+  penHintEl.textContent = PEN_HINTS[tool] || '';
+}
+
+penToolbarEl.querySelectorAll('[data-pen-tool]').forEach((b) => b.addEventListener('click', () => pen.setPrefs({ tool: b.dataset.penTool })));
+penToolbarEl.querySelectorAll('[data-pen-size]').forEach((b) => b.addEventListener('click', () => pen.setPrefs({ size: b.dataset.penSize })));
+penToolbarEl.querySelectorAll('[data-pen-hl-color]').forEach((b) => b.addEventListener('click', () => pen.setPrefs({ hlColor: b.dataset.penHlColor })));
+penToolbarEl.querySelectorAll('[data-pen-ink-color]').forEach((b) => b.addEventListener('click', () => pen.setPrefs({ inkColor: b.dataset.penInkColor })));
+document.getElementById('btn-pen-close').addEventListener('click', () => {
+  pen.setEnabled(false);
+  syncPenToolbar();
+  notify('ابزار قلم خاموش شد؛ قلم مثل انگشت کار می‌کند. از نوار بالا دوباره روشنش کنید.');
+});
+btnPenMode.addEventListener('click', () => {
+  pen.setEnabled(!pen.enabled);
+  syncPenToolbar();
+});
+
+// ---------- EPUB handwritten note card ----------
+const inkCardDialog = document.getElementById('ink-card-dialog');
+const inkCardState = { highlight: null, draft: null, size: pen.prefs.size, color: pen.prefs.inkColor };
+const inkPad = new InkPad(document.getElementById('ink-card-pad'), {
+  getStyle: () => ({ color: inkCardState.color, width: INK_WIDTHS[inkCardState.size] || INK_WIDTHS.m }),
+  isPenOnly: () => pen.penDetected,
+  onChange: () => {},
+});
+
+function syncInkCardTools() {
+  inkCardDialog.querySelectorAll('[data-card-ink-color]').forEach((b) => b.classList.toggle('is-selected', b.dataset.cardInkColor === inkCardState.color));
+  inkCardDialog.querySelectorAll('[data-card-size]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.cardSize === inkCardState.size)));
+  document.getElementById('btn-ink-card-eraser').setAttribute('aria-pressed', String(inkPad.eraser));
+}
+
+function openInkCard({ highlight = null, draft = null }) {
+  inkCardState.highlight = highlight;
+  inkCardState.draft = draft;
+  inkCardState.size = pen.prefs.size;
+  inkCardState.color = pen.prefs.inkColor;
+  inkPad.eraser = false;
+  const quote = highlight ? highlight.quote_text : draft?.quote_text;
+  const quoteEl = document.getElementById('ink-card-quote');
+  quoteEl.textContent = quote ? `کنار: «${quote}»` : '';
+  quoteEl.hidden = !quote;
+  document.getElementById('btn-delete-ink-card').hidden = !highlight;
+  syncInkCardTools();
+  inkCardDialog.showModal();
+  inkPad.load(highlight ? inkStrokes(highlight.rects) : []);
+}
+
+inkCardDialog.querySelectorAll('[data-card-ink-color]').forEach((b) => b.addEventListener('click', () => {
+  inkCardState.color = b.dataset.cardInkColor;
+  inkPad.eraser = false;
+  syncInkCardTools();
+}));
+inkCardDialog.querySelectorAll('[data-card-size]').forEach((b) => b.addEventListener('click', () => {
+  inkCardState.size = b.dataset.cardSize;
+  syncInkCardTools();
+}));
+document.getElementById('btn-ink-card-eraser').addEventListener('click', () => {
+  inkPad.eraser = !inkPad.eraser;
+  syncInkCardTools();
+});
+document.getElementById('btn-ink-card-undo').addEventListener('click', () => inkPad.undo());
+
+document.getElementById('ink-card-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const strokes = inkPad.strokes;
+  const { highlight, draft } = inkCardState;
+  try {
+    if (highlight) {
+      if (strokes.length === 0) {
+        await api.deleteHighlight(highlight.id);
+        state.highlights = state.highlights.filter((h) => h.id !== highlight.id);
+      } else {
+        const { highlight: saved } = await api.updateHighlight(highlight.id, { rects: [inkAnchor(highlight.rects), ...strokes] });
+        const idx = state.highlights.findIndex((h) => h.id === saved.id);
+        if (idx !== -1) state.highlights[idx] = saved;
+      }
+      refreshAnnotations(highlight.page);
+    } else if (draft && strokes.length > 0) {
+      const { highlight: saved } = await api.createHighlight(state.activeBook.id, {
+        page: draft.page,
+        kind: 'ink',
+        color: strokes[0].color,
+        quote_text: draft.quote_text,
+        note: '',
+        rects: [draft.anchor, ...strokes],
+      });
+      state.highlights.push(saved);
+      refreshAnnotations(saved.page);
+      notify('یادداشت دست‌نویس ذخیره شد.');
+    }
+    closeDialog('ink-card-dialog');
+  } catch (err) {
+    notify(`ذخیره یادداشت دست‌نویس ناموفق بود: ${err.message}`);
+  }
+});
+
+document.getElementById('btn-delete-ink-card').addEventListener('click', async () => {
+  const hl = inkCardState.highlight;
+  if (!hl) return;
+  await api.deleteHighlight(hl.id);
+  state.highlights = state.highlights.filter((h) => h.id !== hl.id);
+  refreshAnnotations(hl.page);
+  closeDialog('ink-card-dialog');
+  notify('یادداشت دست‌نویس حذف شد.');
+});
+
+function inkThumbnail(hl) {
+  const strokes = inkStrokes(hl.rects);
+  const anchor = inkAnchor(hl.rects);
+  const { strokes: s, aspect } = anchor
+    ? { strokes, aspect: anchor.aspect || EPUB_CARD_ASPECT }
+    : cropInk(strokes, inkPageAspect(hl.rects));
+  const svg = buildInkSvg(s, aspect, 'ink-thumb');
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  return svg;
 }
 
 // ==================== UI COLOR SCHEME (Modern Web Guidance) ====================
@@ -502,6 +745,7 @@ async function openBook(bookId, { pushHistory = true } = {}) {
     const isEpub = state.activeBook.format === 'epub';
     el.btnAreaHighlight.hidden = isEpub;
     el.btnAreaHighlight.setAttribute('aria-pressed', 'false');
+    syncPenToolbar();
 
     // Auto-collapse sidebar on mobile / Android viewports
     if (window.innerWidth <= 820) {
@@ -610,6 +854,7 @@ function backToLibrary() {
   el.libraryView.hidden = false;
   el.libraryView.toggleAttribute('inert', false);
   state.activeBook = null;
+  syncPenToolbar();
   document.title = APP_ROOT_TITLE;
 
   // 2. Cleanup engines safely
@@ -976,13 +1221,20 @@ function renderHighlightsSidebar() {
     card.className = 'annotation-card';
     card.innerHTML = `
       <div class="annotation-card-head">
-        <span class="annotation-badge"><span class="hl-swatch swatch-${hl.color}" style="width:10px;height:10px;"></span>${hl.kind === 'area' ? 'ناحیه‌ای' : 'متنی'}</span>
+        <span class="annotation-badge"><span class="hl-swatch swatch-${hl.color}" style="width:10px;height:10px;"></span>${{ area: 'ناحیه‌ای', ink: 'دست‌نویس' }[hl.kind] || 'متنی'}</span>
         <span>${unitLabel} ${hl.page}</span>
       </div>
       ${hl.quote_text ? `<blockquote class="annotation-quote" dir="auto">${escapeHtml(hl.quote_text)}</blockquote>` : ''}
       ${hl.note ? `<p class="annotation-note" dir="auto">${escapeHtml(hl.note)}</p>` : ''}
     `;
+    if (hl.kind === 'ink') card.appendChild(inkThumbnail(hl));
     card.addEventListener('click', () => {
+      if (hl.kind === 'ink' && inkAnchor(hl.rects)) {
+        getEngine().goToPage(hl.page);
+        closeSidebarOnMobile();
+        openInkCard({ highlight: hl });
+        return;
+      }
       getEngine().goToPage(hl.page);
       closeSidebarOnMobile();
     });
@@ -1042,6 +1294,8 @@ function openHighlightDialog({ isNew, highlight }) {
   }
   document.getElementById('hl-note-textarea').value = highlight.note || '';
   document.getElementById('btn-delete-highlight').hidden = isNew;
+  // Ink keeps its own stroke colours; only the note and delete apply.
+  document.getElementById('hl-dialog-swatches').closest('.field-label').hidden = highlight.kind === 'ink';
   syncHlDialogSwatches();
   document.getElementById('highlight-note-dialog').showModal();
 }
@@ -1078,8 +1332,12 @@ document.getElementById('highlight-note-form').addEventListener('submit', async 
     state.highlights.push(highlight);
     rerenderPageOverlay(highlight.page);
     notify('هایلایت و یادداشت ذخیره شد.');
+  } else if (String(ctx.highlight.id).startsWith('pending-')) {
+    // Ink note not saved yet: the queued create carries the note.
+    ctx.highlight.note = note;
+    queueInkSave(ctx.highlight);
   } else {
-    const { highlight } = await api.updateHighlight(ctx.highlight.id, { color, note });
+    const { highlight } = await api.updateHighlight(ctx.highlight.id, ctx.highlight.kind === 'ink' ? { note } : { color, note });
     const idx = state.highlights.findIndex((h) => h.id === highlight.id);
     if (idx !== -1) state.highlights[idx] = highlight;
     rerenderPageOverlay(highlight.page);
@@ -1095,7 +1353,12 @@ document.getElementById('btn-delete-highlight').addEventListener('click', async 
   const ctx = state.dialogHighlightContext;
   if (!ctx || ctx.isNew) return;
   const hl = ctx.highlight;
-  await api.deleteHighlight(hl.id);
+  if (hl.kind === 'ink') {
+    setInkStrokes(hl, []); // goes through the ink save queue (safe while a create is still in flight)
+    queueInkSave(hl);
+  } else {
+    await api.deleteHighlight(hl.id);
+  }
   state.highlights = state.highlights.filter((h) => h.id !== hl.id);
   annotations.setData({ highlights: state.highlights, bookmarks: state.bookmarks });
   rerenderPageOverlay(hl.page);
@@ -1252,8 +1515,13 @@ const viewportResizeObserver = new ResizeObserver(() => {
   const engine = getEngine();
   if (engine.zoomMode !== 'fit-width' && engine.zoomMode !== 'fit-page') return;
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
+  resizeTimer = setTimeout(function relayout() {
     if (!state.activeBook) return;
+    // Rebuilding mid-stroke would detach the page under the pen; wait for the stroke to end.
+    if (pen.gesture) {
+      resizeTimer = setTimeout(relayout, 250);
+      return;
+    }
     const activeEngine = getEngine();
     activeEngine.buildLayout();
     updateZoomLabel();

@@ -36,6 +36,12 @@ Most self-hosted readers either require Docker/PostgreSQL stacks or struggle wit
   - 4 reading themes (`Paper`, `Sepia`, `Smart Dark`, `Midnight`), brightness & warmth sliders, Scroll / Single / Two-Page Spread (`RTL` & `LTR`), and distraction-free Zen Mode (`F`).
 - **1-Click Obsidian Export**:
   - Compiles your progress, custom TOC, pins, highlights, and notes into a structured Markdown file with YAML frontmatter.
+- **S Pen & Stylus (Galaxy Ultra, tablets, Wacom)**:
+  - The pen writes, your finger scrolls; no mode switch. A pen toolbar appears the first time a pen is detected.
+  - **Highlight:** drag the pen over text (EPUB or PDF). On scanned PDF pages the dragged box becomes an area highlight.
+  - **Handwriting:** write directly on PDF pages; on EPUB, tap the text to open a handwritten note card that stays anchored in the margin.
+  - **Eraser:** hold the S Pen side button (or pick the eraser) and rub over a stroke. Three sizes, pressure-sensitive; ink in black, blue or red.
+  - Ink is saved with your highlights, included in the library backup, and exported to Obsidian as inline SVG.
 
 ### Screenshots
 
@@ -165,6 +171,12 @@ Then open the printed LAN URL (e.g., `http://192.168.1.25:3847/?token=...`) in C
   - ۴ تم خوانایی (`کاغذ سفید`، `سپیا`، `شب هوشمند`، `تیره اصلی`)، تنظیم روشنایی و گرمای نور، حالت دوصفحه‌ای کتابی (راست‌به‌چپ و چپ‌به‌راست) و حالت متمرکز (`F`).
 - **خروجی مستقیم به Obsidian:**
   - تبدیل تمام هایلایت‌ها، نقل‌قول‌ها، نشان‌ها و پیشرفت مطالعه به یک فایل Markdown ساختاریافته.
+- **پشتیبانی از S Pen و قلم (گلکسی اولترا، تبلت، Wacom):**
+  - قلم می‌نویسد و انگشت اسکرول می‌کند؛ بدون تعویض حالت. نوار ابزار قلم با اولین تشخیص قلم ظاهر می‌شود.
+  - **هایلایت:** قلم را روی متن بکشید (EPUB یا PDF). در صفحه‌های اسکن‌شده، کادر کشیده‌شده هایلایت ناحیه‌ای می‌شود.
+  - **دست‌نویس:** روی صفحه PDF مستقیم بنویسید؛ در EPUB روی متن بزنید تا کارت یادداشت دست‌نویس باز شود و کنار متن در حاشیه بماند.
+  - **پاک‌کن:** دکمه کناری S Pen را نگه دارید (یا پاک‌کن را انتخاب کنید) و روی خط بکشید. سه ضخامت، حساس به فشار؛ جوهر مشکی، آبی یا قرمز.
+  - یادداشت‌های دست‌نویس همراه هایلایت‌ها ذخیره می‌شوند، در پشتیبان کتابخانه هستند و به Obsidian به صورت SVG خروجی می‌گیرند.
 
 ### تصاویر برنامه
 

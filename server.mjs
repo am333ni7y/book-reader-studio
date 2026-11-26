@@ -18,6 +18,7 @@ import {
   mergeObsidianNote,
   buildObsidianParts,
 } from './public/js/obsidian-markdown.js';
+import { normalizeHighlightKind, sanitizeHighlightRects } from './public/js/ink-core.js';
 
 // Re-exported for tests/server.test.mjs, which imports it from here.
 export { mergeObsidianNote };
@@ -429,7 +430,10 @@ function importLibraryBackup(store, backup) {
   for (const hl of listOf('highlights')) {
     const localId = idMap.get(hl.book_id);
     if (!localId || !hl.id || existingIds.has(hl.id)) continue;
-    store.insertHighlight({ ...hl, book_id: localId, page: pageOf(hl), rects: Array.isArray(hl.rects) ? hl.rects : [] });
+    const kind = normalizeHighlightKind(hl.kind);
+    const rects = sanitizeHighlightRects(kind, hl.rects);
+    if (!rects) continue; // ink row without a usable stroke
+    store.insertHighlight({ ...hl, kind, book_id: localId, page: pageOf(hl), rects });
     existingIds.add(hl.id);
     inserted.highlights += 1;
   }
@@ -747,13 +751,14 @@ async function handleApi(req, res, urlObj, ctx) {
       const existing = store.getBook(bookId);
       if (!existing) return sendError(res, 404, 'کتاب پیدا نشد.');
       const body = await readJsonBody(req);
-      const rects = Array.isArray(body.rects) ? body.rects : [];
-      if (rects.length === 0) return sendError(res, 400, 'مختصات هایلایت الزامی است.');
+      const kind = normalizeHighlightKind(body.kind);
+      const rects = sanitizeHighlightRects(kind, body.rects);
+      if (!rects || rects.length === 0) return sendError(res, 400, 'مختصات هایلایت الزامی است.');
 
       const highlight = store.insertHighlight({
         book_id: bookId,
         page: Math.max(1, Number(body.page) || 1),
-        kind: body.kind === 'area' ? 'area' : 'text',
+        kind,
         color: String(body.color || 'amber'),
         quote_text: String(body.quote_text || ''),
         note: String(body.note || ''),
@@ -817,6 +822,15 @@ async function handleApi(req, res, urlObj, ctx) {
     const id = hlMatch[1];
     if (method === 'PATCH') {
       const body = await readJsonBody(req);
+      if (Object.hasOwn(body, 'rects')) {
+        // Only ink strokes can be rewritten after creation (append / erase); text ranges stay fixed.
+        const current = store.getHighlight(id);
+        if (!current) return sendError(res, 404, 'هایلایت پیدا نشد.');
+        if (current.kind !== 'ink') return sendError(res, 400, 'فقط یادداشت دست‌نویس قابل ویرایش مختصات است.');
+        const rects = sanitizeHighlightRects('ink', body.rects);
+        if (!rects) return sendError(res, 400, 'خط دست‌نویس معتبری ارسال نشد.');
+        body.rects = rects;
+      }
       const highlight = store.updateHighlight(id, body);
       return highlight ? sendJson(res, 200, { highlight }) : sendError(res, 404, 'هایلایت پیدا نشد.');
     }

@@ -1,5 +1,6 @@
 // Pure Browser IndexedDB Backend for Android APK & Standalone Offline WebView
 import { buildObsidianNote, obsidianFilename } from './obsidian-markdown.js';
+import { normalizeHighlightKind, sanitizeHighlightRects, sanitizeInkRects } from './ink-core.js';
 import {
   parseClientEpubSummary,
   getClientEpubManifest,
@@ -323,15 +324,18 @@ export const clientBackend = {
 
   async createHighlight(bookId, payload) {
     const now = new Date().toISOString();
+    const kind = normalizeHighlightKind(payload.kind);
+    const rects = sanitizeHighlightRects(kind, payload.rects);
+    if (!rects || rects.length === 0) throw new Error('مختصات هایلایت الزامی است.');
     const highlight = {
       id: crypto.randomUUID(),
       book_id: bookId,
       page: Math.max(1, Number(payload.page) || 1),
-      kind: payload.kind === 'area' ? 'area' : 'text',
+      kind,
       color: String(payload.color || 'amber'),
       quote_text: String(payload.quote_text || ''),
       note: String(payload.note || ''),
-      rects: Array.isArray(payload.rects) ? payload.rects : [],
+      rects,
       created_at: now,
       updated_at: now,
     };
@@ -342,7 +346,17 @@ export const clientBackend = {
   async updateHighlight(highlightId, patch) {
     const hl = await getRecord('highlights', highlightId);
     if (!hl) throw new Error('هایلایت پیدا نشد.');
-    const updated = { ...hl, ...patch, updated_at: new Date().toISOString() };
+    const clean = {};
+    for (const key of ['color', 'note', 'quote_text']) {
+      if (Object.hasOwn(patch, key)) clean[key] = String(patch[key] ?? '');
+    }
+    if (Object.hasOwn(patch, 'rects')) {
+      if (hl.kind !== 'ink') throw new Error('فقط یادداشت دست‌نویس قابل ویرایش مختصات است.');
+      const rects = sanitizeInkRects(patch.rects);
+      if (!rects) throw new Error('خط دست‌نویس معتبری ارسال نشد.');
+      clean.rects = rects;
+    }
+    const updated = { ...hl, ...clean, updated_at: new Date().toISOString() };
     await putRecord('highlights', updated);
     return { highlight: updated };
   },
@@ -484,15 +498,18 @@ export const clientBackend = {
       const localId = idMap.get(hl.book_id);
       if (!localId || !hl.id || existingIds.has(hl.id)) continue;
       const now = new Date().toISOString();
+      const kind = normalizeHighlightKind(hl.kind);
+      const rects = sanitizeHighlightRects(kind, hl.rects);
+      if (!rects) continue;
       await putRecord('highlights', {
         id: hl.id,
         book_id: localId,
         page: pageOf(hl),
-        kind: hl.kind === 'area' ? 'area' : 'text',
+        kind,
         color: String(hl.color || 'amber'),
         quote_text: String(hl.quote_text || ''),
         note: String(hl.note || ''),
-        rects: Array.isArray(hl.rects) ? hl.rects : [],
+        rects,
         created_at: hl.created_at || now,
         updated_at: hl.updated_at || hl.created_at || now,
       });

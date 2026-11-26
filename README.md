@@ -9,6 +9,8 @@
 ![Platforms](https://img.shields.io/badge/Platforms-macOS%20%7C%20Windows%20%7C%20Android-1f2937)
 ![License](https://img.shields.io/badge/License-MIT-blue)
 
+![Ketabkhan Studio reading a bilingual EPUB with highlights, bookmark ribbons and a custom table of contents](docs/screenshots/reader-epub.png)
+
 ---
 
 <a id="english-documentation"></a>
@@ -34,6 +36,16 @@ Most self-hosted readers either require Docker/PostgreSQL stacks or struggle wit
   - 4 reading themes (`Paper`, `Sepia`, `Smart Dark`, `Midnight`), brightness & warmth sliders, Scroll / Single / Two-Page Spread (`RTL` & `LTR`), and distraction-free Zen Mode (`F`).
 - **1-Click Obsidian Export**:
   - Compiles your progress, custom TOC, pins, highlights, and notes into a structured Markdown file with YAML frontmatter.
+
+### Screenshots
+
+| Library | Highlights & notes |
+| --- | --- |
+| ![Library with book cards, reading progress and backup buttons](docs/screenshots/library.png) | ![Highlights panel listing colour-coded highlights with notes](docs/screenshots/reader-highlights.png) |
+| **Midnight theme** | **PDF reader** |
+| ![EPUB in the Midnight dark theme](docs/screenshots/reader-dark.png) | ![Sample PDF with its table of contents sidebar](docs/screenshots/reader-pdf.png) |
+
+<p align="center"><img src="docs/screenshots/mobile-reader.png" alt="EPUB reader on a phone-width screen" width="300"></p>
 
 ---
 
@@ -153,6 +165,16 @@ Then open the printed LAN URL (e.g., `http://192.168.1.25:3847/?token=...`) in C
   - ۴ تم خوانایی (`کاغذ سفید`، `سپیا`، `شب هوشمند`، `تیره اصلی`)، تنظیم روشنایی و گرمای نور، حالت دوصفحه‌ای کتابی (راست‌به‌چپ و چپ‌به‌راست) و حالت متمرکز (`F`).
 - **خروجی مستقیم به Obsidian:**
   - تبدیل تمام هایلایت‌ها، نقل‌قول‌ها، نشان‌ها و پیشرفت مطالعه به یک فایل Markdown ساختاریافته.
+
+### تصاویر برنامه
+
+| کتابخانه | هایلایت‌ها و یادداشت‌ها |
+| --- | --- |
+| ![کتابخانه با کارت کتاب‌ها، پیشرفت مطالعه و دکمه‌های پشتیبان‌گیری](docs/screenshots/library.png) | ![پنل هایلایت‌ها با رنگ‌بندی و یادداشت](docs/screenshots/reader-highlights.png) |
+| **تم شب (Midnight)** | **خواندن PDF** |
+| ![کتاب EPUB در تم تیره](docs/screenshots/reader-dark.png) | ![فایل PDF نمونه با فهرست کناری](docs/screenshots/reader-pdf.png) |
+
+<p align="center"><img src="docs/screenshots/mobile-reader.png" alt="محیط مطالعه در صفحه موبایل" width="300"></p>
 
 ---
 

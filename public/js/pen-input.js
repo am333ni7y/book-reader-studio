@@ -67,6 +67,23 @@ function rangeBetween(a, b) {
   return range;
 }
 
+// A pen tip is wider than a caret: grow a range to whole words (letters, digits, ZWNJ for Persian).
+const WORD_CHAR = /[\p{L}\p{N}\p{M}‌]/u;
+export function snapRangeToWords(range) {
+  const { startContainer: sc, endContainer: ec } = range;
+  if (sc.nodeType === Node.TEXT_NODE) {
+    let i = range.startOffset;
+    while (i > 0 && WORD_CHAR.test(sc.nodeValue[i - 1]) && WORD_CHAR.test(sc.nodeValue[i] || '')) i -= 1;
+    range.setStart(sc, i);
+  }
+  if (ec.nodeType === Node.TEXT_NODE) {
+    let j = range.endOffset;
+    while (j < ec.nodeValue.length && WORD_CHAR.test(ec.nodeValue[j]) && WORD_CHAR.test(ec.nodeValue[j - 1] || '')) j += 1;
+    range.setEnd(ec, j);
+  }
+  return range;
+}
+
 function pointsFromEvent(e) {
   const list = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
   return list.length > 0 ? list : [e];
@@ -334,7 +351,7 @@ export class PenController {
     if (!g.startCaret || !endCaret) return null;
     if (!g.shell.contains(g.startCaret.node) || !g.shell.contains(endCaret.node)) return null;
     const range = rangeBetween(g.startCaret, endCaret);
-    return range && !range.collapsed ? range : null;
+    return range && !range.collapsed ? snapRangeToWords(range) : null;
   }
 
   pageHasText(shell) {

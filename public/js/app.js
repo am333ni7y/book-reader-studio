@@ -1515,8 +1515,13 @@ const viewportResizeObserver = new ResizeObserver(() => {
   const engine = getEngine();
   if (engine.zoomMode !== 'fit-width' && engine.zoomMode !== 'fit-page') return;
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
+  resizeTimer = setTimeout(function relayout() {
     if (!state.activeBook) return;
+    // Rebuilding mid-stroke would detach the page under the pen; wait for the stroke to end.
+    if (pen.gesture) {
+      resizeTimer = setTimeout(relayout, 250);
+      return;
+    }
     const activeEngine = getEngine();
     activeEngine.buildLayout();
     updateZoomLabel();

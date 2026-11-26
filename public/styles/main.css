@@ -1528,8 +1528,10 @@ mark.epub-hl.hl-lavender { background: var(--hl-lavender); }
   color: var(--text-muted);
 }
 .pen-hint:empty { display: none; }
-body.has-pen-toolbar .pdf-viewport {
-  padding-bottom: 7rem;
+/* Room below the last page for the toolbar; on the container, not the viewport, so the viewport
+   ResizeObserver (fit-width re-layout) is not triggered when the toolbar appears. */
+body.has-pen-toolbar .pdf-pages-container {
+  margin-bottom: 6rem;
 }
 
 /* EPUB handwritten note markers in the margin */

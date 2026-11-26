@@ -361,6 +361,9 @@ export class EpubEngine {
   destroy() {
     this.clearRenderedState();
     if (this.searchAbort) this.searchAbort.abort = true;
+    if (this.bookId) {
+      api.releaseBookResources?.(this.bookId);
+    }
     this.containerEl.classList.remove('is-epub-mode');
     this.containerEl.style.removeProperty('--epub-font-scale');
     this.containerEl.innerHTML = '';

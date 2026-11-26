@@ -1,0 +1,8 @@
+{
+  "appId": "ir.ameeen.ketabkhan",
+  "appName": "Ketabkhan Studio",
+  "webDir": "dist-web",
+  "server": {
+    "androidScheme": "https"
+  }
+}

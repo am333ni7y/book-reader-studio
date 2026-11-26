@@ -1,4 +1,24 @@
-// Typed REST API client for Ketabkhan Studio
+// Dual-Backend API Client for Ketabkhan Studio
+// Automatically uses embedded HTTP server (Desktop / CLI) or pure IndexedDB + WebAssembly/DecompressionStream (Android APK)
+import { clientBackend } from './client-backend.js';
+
+let backendModePromise = null;
+
+async function isServerAvailable() {
+  if (backendModePromise) return backendModePromise;
+  backendModePromise = (async () => {
+    if (window.Capacitor?.isNativePlatform?.() || location.protocol === 'capacitor:' || location.protocol === 'file:') {
+      return false;
+    }
+    try {
+      const res = await fetch('/api/health', { signal: AbortSignal.timeout(1200) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  })();
+  return backendModePromise;
+}
 
 async function request(url, options = {}) {
   const res = await fetch(url, {
@@ -16,28 +36,58 @@ async function request(url, options = {}) {
 }
 
 export const api = {
-  listBooks: () => request('/api/books'),
+  async isClientOnly() {
+    return !(await isServerAvailable());
+  },
 
-  getBook: (id) => request(`/api/books/${encodeURIComponent(id)}`),
+  async listBooks() {
+    return (await isServerAvailable()) ? request('/api/books') : clientBackend.listBooks();
+  },
 
-  getEpubManifest: (id) => request(`/api/books/${encodeURIComponent(id)}/epub-manifest`),
+  async getBook(id) {
+    return (await isServerAvailable()) ? request(`/api/books/${encodeURIComponent(id)}`) : clientBackend.getBook(id);
+  },
 
-  getEpubChapter: (id, chapterNum) =>
-    request(`/api/books/${encodeURIComponent(id)}/epub-chapter/${Number(chapterNum)}`),
+  async getBookPdfSource(id) {
+    if (await isServerAvailable()) {
+      return { url: `/api/books/${encodeURIComponent(id)}/file`, rangeChunkSize: 65536 };
+    }
+    return clientBackend.getBookPdfSource(id);
+  },
 
-  searchEpub: (id, q) =>
-    request(`/api/books/${encodeURIComponent(id)}/epub-search?q=${encodeURIComponent(q)}`),
+  async getEpubManifest(id) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(id)}/epub-manifest`)
+      : clientBackend.getEpubManifest(id);
+  },
 
-  updateBook: (id, patch) =>
-    request(`/api/books/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    }),
+  async getEpubChapter(id, chapterNum) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(id)}/epub-chapter/${Number(chapterNum)}`)
+      : clientBackend.getEpubChapter(id, chapterNum);
+  },
 
-  deleteBook: (id) =>
-    request(`/api/books/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    }),
+  async searchEpub(id, q) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(id)}/epub-search?q=${encodeURIComponent(q)}`)
+      : clientBackend.searchEpub(id, q);
+  },
+
+  releaseBookResources(id) {
+    clientBackend.releaseBookResources(id);
+  },
+
+  async updateBook(id, patch) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) })
+      : clientBackend.updateBook(id, patch);
+  },
+
+  async deleteBook(id) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      : clientBackend.deleteBook(id);
+  },
 
   importFromPath: (filePath, title = '') =>
     request('/api/books/import-path', {
@@ -45,8 +95,22 @@ export const api = {
       body: JSON.stringify({ filePath, title }),
     }),
 
-  uploadBookFile: (file, onProgress) =>
-    new Promise((resolve, reject) => {
+  async seedSampleBook() {
+    return (await isServerAvailable())
+      ? request('/api/books/seed', { method: 'POST' })
+      : clientBackend.seedSampleBook();
+  },
+
+  async pickDesktopBooks() {
+    if (!window.ketabkhanDesktop?.isDesktop) return null;
+    return window.ketabkhanDesktop.pickBooks();
+  },
+
+  async uploadBookFile(file, onProgress) {
+    if (!(await isServerAvailable())) {
+      return clientBackend.uploadBookFile(file, onProgress);
+    }
+    return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/books');
       const isEpub = file.name.toLowerCase().endsWith('.epub');
@@ -68,57 +132,77 @@ export const api = {
       };
       xhr.onerror = () => reject(new Error('خطای شبکه هنگام ارسال فایل'));
       xhr.send(file);
-    }),
+    });
+  },
 
   uploadPdfFile: (file, onProgress) => api.uploadBookFile(file, onProgress),
 
-  toggleRibbonBookmark: (bookId, page) =>
-    request(`/api/books/${encodeURIComponent(bookId)}/bookmarks`, {
-      method: 'POST',
-      body: JSON.stringify({ page, kind: 'ribbon', toggle: true }),
-    }),
+  async toggleRibbonBookmark(bookId, page) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(bookId)}/bookmarks`, {
+          method: 'POST',
+          body: JSON.stringify({ page, kind: 'ribbon', toggle: true }),
+        })
+      : clientBackend.toggleRibbonBookmark(bookId, page);
+  },
 
-  createPinBookmark: (bookId, payload) =>
-    request(`/api/books/${encodeURIComponent(bookId)}/bookmarks`, {
-      method: 'POST',
-      body: JSON.stringify({ ...payload, kind: 'pin' }),
-    }),
+  async createPinBookmark(bookId, payload) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(bookId)}/bookmarks`, {
+          method: 'POST',
+          body: JSON.stringify({ ...payload, kind: 'pin' }),
+        })
+      : clientBackend.createPinBookmark(bookId, payload);
+  },
 
-  deleteBookmark: (bookmarkId) =>
-    request(`/api/bookmarks/${encodeURIComponent(bookmarkId)}`, {
-      method: 'DELETE',
-    }),
+  async deleteBookmark(bookmarkId) {
+    return (await isServerAvailable())
+      ? request(`/api/bookmarks/${encodeURIComponent(bookmarkId)}`, { method: 'DELETE' })
+      : clientBackend.deleteBookmark(bookmarkId);
+  },
 
-  createHighlight: (bookId, payload) =>
-    request(`/api/books/${encodeURIComponent(bookId)}/highlights`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  async createHighlight(bookId, payload) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(bookId)}/highlights`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+      : clientBackend.createHighlight(bookId, payload);
+  },
 
-  updateHighlight: (highlightId, patch) =>
-    request(`/api/highlights/${encodeURIComponent(highlightId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    }),
+  async updateHighlight(highlightId, patch) {
+    return (await isServerAvailable())
+      ? request(`/api/highlights/${encodeURIComponent(highlightId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        })
+      : clientBackend.updateHighlight(highlightId, patch);
+  },
 
-  deleteHighlight: (highlightId) =>
-    request(`/api/highlights/${encodeURIComponent(highlightId)}`, {
-      method: 'DELETE',
-    }),
+  async deleteHighlight(highlightId) {
+    return (await isServerAvailable())
+      ? request(`/api/highlights/${encodeURIComponent(highlightId)}`, { method: 'DELETE' })
+      : clientBackend.deleteHighlight(highlightId);
+  },
 
-  createTocEntry: (bookId, payload) =>
-    request(`/api/books/${encodeURIComponent(bookId)}/toc`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  async createTocEntry(bookId, payload) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(bookId)}/toc`, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+      : clientBackend.createTocEntry(bookId, payload);
+  },
 
-  deleteTocEntry: (tocId) =>
-    request(`/api/toc/${encodeURIComponent(tocId)}`, {
-      method: 'DELETE',
-    }),
+  async deleteTocEntry(tocId) {
+    return (await isServerAvailable())
+      ? request(`/api/toc/${encodeURIComponent(tocId)}`, { method: 'DELETE' })
+      : clientBackend.deleteTocEntry(tocId);
+  },
 
-  exportObsidian: (bookId) =>
-    request(`/api/books/${encodeURIComponent(bookId)}/export-obsidian`, {
-      method: 'POST',
-    }),
+  async exportObsidian(bookId) {
+    return (await isServerAvailable())
+      ? request(`/api/books/${encodeURIComponent(bookId)}/export-obsidian`, { method: 'POST' })
+      : clientBackend.exportObsidian(bookId);
+  },
 };

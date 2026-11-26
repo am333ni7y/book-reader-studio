@@ -1,0 +1,39 @@
+appId: ir.ameeen.ketabkhan
+productName: Ketabkhan Studio
+copyright: Copyright © 2026 Ketabkhan Studio
+npmRebuild: false
+directories:
+  output: dist-desktop
+  buildResources: build
+files:
+  - electron/**/*
+  - lib/**/*
+  - server.mjs
+  - scripts/generate-sample-book.mjs
+  - package.json
+  - from: dist-web
+    to: public
+  - "!node_modules/**/*"
+fileAssociations:
+  - ext: pdf
+    name: PDF Document
+    role: Viewer
+  - ext: epub
+    name: EPUB Book
+    role: Viewer
+mac:
+  icon: build/icon.icns
+  category: public.app-category.books
+  target:
+    - dmg
+    - zip
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+    - portable
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

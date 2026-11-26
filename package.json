@@ -1,7 +1,9 @@
 {
   "name": "book-reader-studio",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Local-first PDF & EPUB Book Reader Studio with RTL/LTR typography, dual-mode & reflowable highlighting, bookmarks, smart TOC, and Obsidian Markdown export (macOS, Windows, Android).",
+  "main": "electron/main.mjs",
+  "author": "Ketabkhan Studio",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -15,7 +17,12 @@
     "start": "node bin/ketabkhan.mjs start",
     "start:lan": "node bin/ketabkhan.mjs start --lan",
     "seed": "node scripts/generate-sample-book.mjs",
-    "doctor": "node bin/ketabkhan.mjs doctor"
+    "doctor": "node bin/ketabkhan.mjs doctor",
+    "build:web": "node scripts/build-web.mjs",
+    "electron:start": "electron .",
+    "build:mac": "node scripts/build-web.mjs && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip",
+    "build:win": "node scripts/build-web.mjs && electron-builder --win nsis portable",
+    "cap:sync": "node scripts/build-web.mjs && npx cap sync android"
   },
   "repository": {
     "type": "git",
@@ -37,5 +44,12 @@
   "dependencies": {
     "pdfjs-dist": "^6.5.438",
     "vazirmatn": "^33.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
+    "@capacitor/core": "^8.6.2",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0"
   }
 }

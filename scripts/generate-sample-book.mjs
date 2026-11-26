@@ -267,10 +267,10 @@ export function buildSampleEpubBuffer() {
 
 const isCli = process.argv[1] && path.resolve(process.argv[1]).endsWith('generate-sample-book.mjs');
 if (isCli) {
-  const { db, booksDir } = openDatabase(resolveDataDir());
+  const { db, booksDir } = await openDatabase(resolveDataDir());
   try {
-    const count = db.prepare('SELECT COUNT(*) AS c FROM books').get().c;
-    if (count === 0) {
+    const existing = db.listBooks();
+    if (existing.length === 0) {
       const now = new Date().toISOString();
 
       // 1. Seed Sample PDF
@@ -278,10 +278,19 @@ if (isCli) {
       const pdfId = crypto.randomUUID();
       const pdfDest = path.join(booksDir, `${pdfId}.pdf`);
       fs.writeFileSync(pdfDest, pdfBuf);
-      db.prepare(`
-        INSERT INTO books (id, title, author, format, filename, file_path, file_size, total_pages, reading_dir, created_at, last_opened_at)
-        VALUES (?, ?, ?, 'pdf', ?, ?, ?, ?, 'ltr', ?, ?)
-      `).run(pdfId, 'Deep Reading & Systems Thinking (Sample)', 'Ketabkhan Studio', 'sample-book.pdf', pdfDest, pdfBuf.length, 4, now, now);
+      db.insertBook({
+        id: pdfId,
+        title: 'Deep Reading & Systems Thinking (Sample)',
+        author: 'Ketabkhan Studio',
+        format: 'pdf',
+        filename: 'sample-book.pdf',
+        file_path: pdfDest,
+        file_size: pdfBuf.length,
+        total_pages: 4,
+        reading_dir: 'ltr',
+        created_at: now,
+        last_opened_at: now,
+      });
 
       // 2. Seed Sample Bilingual EPUB
       const epubBuf = buildSampleEpubBuffer();
@@ -289,10 +298,20 @@ if (isCli) {
       const epubDest = path.join(booksDir, `${epubId}.epub`);
       fs.writeFileSync(epubDest, epubBuf);
       const summary = await parseEpubSummary(epubDest);
-      db.prepare(`
-        INSERT INTO books (id, title, author, format, filename, file_path, file_size, total_pages, zoom_scale, reading_dir, created_at, last_opened_at)
-        VALUES (?, ?, ?, 'epub', ?, ?, ?, ?, 1.0, ?, ?, ?)
-      `).run(epubId, summary.title, summary.author, 'sample-bilingual.epub', epubDest, epubBuf.length, summary.totalChapters, summary.readingDir, now, now);
+      db.insertBook({
+        id: epubId,
+        title: summary.title,
+        author: summary.author,
+        format: 'epub',
+        filename: 'sample-bilingual.epub',
+        file_path: epubDest,
+        file_size: epubBuf.length,
+        total_pages: summary.totalChapters,
+        zoom_scale: 1.0,
+        reading_dir: summary.readingDir,
+        created_at: now,
+        last_opened_at: now,
+      });
 
       console.log(`Seeded sample PDF (${pdfId}) and sample EPUB (${epubId}).`);
     } else {

@@ -132,7 +132,7 @@ async function main() {
       console.error('Error: Please provide a .pdf or .epub file path.\nUsage: ketabkhan add <file> [--title "Book Title"]');
       process.exit(1);
     }
-    const { db, booksDir } = openDatabase(resolveDataDir(flags['data-dir']));
+    const { db, booksDir } = await openDatabase(resolveDataDir(flags['data-dir']));
     try {
       const book = await importBookFromFile({
         db,
@@ -153,7 +153,7 @@ async function main() {
     const dataDir = resolveDataDir(flags['data-dir']);
     const obsidianDir = resolveObsidianDir(flags['notes-dir']);
 
-    startServer({
+    await startServer({
       host,
       port,
       dataDir,

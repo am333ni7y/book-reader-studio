@@ -4,7 +4,6 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
 import {
   PROJECT_ROOT,
   loadDotEnv,
@@ -12,6 +11,7 @@ import {
   resolveObsidianDir,
   getLanUrls,
 } from './lib/paths.mjs';
+import { openLibraryStore } from './lib/db-adapter.mjs';
 import {
   parseEpubSummary,
   getEpubChapter,
@@ -22,8 +22,12 @@ import {
 loadDotEnv();
 
 const PUBLIC_DIR = path.join(PROJECT_ROOT, 'public');
-const PDFJS_DIR = path.join(PROJECT_ROOT, 'node_modules', 'pdfjs-dist');
-const VAZIR_DIR = path.join(PROJECT_ROOT, 'node_modules', 'vazirmatn');
+const PDFJS_DIR = fs.existsSync(path.join(PROJECT_ROOT, 'node_modules', 'pdfjs-dist'))
+  ? path.join(PROJECT_ROOT, 'node_modules', 'pdfjs-dist')
+  : path.join(PUBLIC_DIR, 'vendor', 'pdfjs');
+const VAZIR_DIR = fs.existsSync(path.join(PROJECT_ROOT, 'node_modules', 'vazirmatn'))
+  ? path.join(PROJECT_ROOT, 'node_modules', 'vazirmatn')
+  : path.join(PUBLIC_DIR, 'vendor', 'vazirmatn');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -49,85 +53,9 @@ const MIME_TYPES = {
   '.epub': 'application/epub+zip',
 };
 
-export function openDatabase(dataDir = resolveDataDir()) {
-  const booksDir = path.join(dataDir, 'books');
-  fs.mkdirSync(booksDir, { recursive: true });
-
-  const db = new DatabaseSync(path.join(dataDir, 'library.sqlite'));
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-
-    CREATE TABLE IF NOT EXISTS books (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      author TEXT DEFAULT '',
-      format TEXT DEFAULT 'pdf',
-      filename TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      file_size INTEGER NOT NULL,
-      total_pages INTEGER DEFAULT 0,
-      current_page INTEGER DEFAULT 1,
-      scroll_ratio REAL DEFAULT 0,
-      zoom_mode TEXT DEFAULT 'fit-width',
-      zoom_scale REAL DEFAULT 1.25,
-      view_mode TEXT DEFAULT 'scroll',
-      page_theme TEXT DEFAULT 'paper',
-      reading_dir TEXT DEFAULT 'rtl',
-      warmth INTEGER DEFAULT 0,
-      brightness INTEGER DEFAULT 100,
-      reading_seconds INTEGER DEFAULT 0,
-      cover_data_url TEXT DEFAULT '',
-      created_at TEXT NOT NULL,
-      last_opened_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS bookmarks (
-      id TEXT PRIMARY KEY,
-      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-      page INTEGER NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'ribbon',
-      label TEXT DEFAULT '',
-      category TEXT DEFAULT 'کلیدی',
-      color TEXT DEFAULT 'amber',
-      note TEXT DEFAULT '',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS highlights (
-      id TEXT PRIMARY KEY,
-      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-      page INTEGER NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'text',
-      color TEXT NOT NULL DEFAULT 'amber',
-      quote_text TEXT DEFAULT '',
-      note TEXT DEFAULT '',
-      rects_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS toc_entries (
-      id TEXT PRIMARY KEY,
-      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-      title TEXT NOT NULL,
-      page INTEGER NOT NULL,
-      level INTEGER DEFAULT 0,
-      sort_order INTEGER DEFAULT 0,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_bookmarks_book ON bookmarks(book_id, page);
-    CREATE INDEX IF NOT EXISTS idx_highlights_book ON highlights(book_id, page);
-    CREATE INDEX IF NOT EXISTS idx_toc_book ON toc_entries(book_id, page, sort_order);
-  `);
-
-  const cols = db.prepare('PRAGMA table_info(books)').all();
-  if (!cols.some((c) => c.name === 'format')) {
-    db.exec("ALTER TABLE books ADD COLUMN format TEXT DEFAULT 'pdf';");
-  }
-
-  return { db, dataDir, booksDir };
+export async function openDatabase(dataDir = resolveDataDir()) {
+  const store = await openLibraryStore(dataDir);
+  return { db: store, store, dataDir: store.dataDir, booksDir: store.booksDir };
 }
 
 function sendJson(res, status, data) {
@@ -210,7 +138,8 @@ function detectFormatFromMagic(buf) {
   return null;
 }
 
-export async function importBookFromFile({ db, booksDir, filePath, title = '' }) {
+export async function importBookFromFile({ store, db, booksDir, filePath, title = '' }) {
+  const lib = store || db;
   const resolved = path.resolve(filePath);
   let stat;
   try {
@@ -263,22 +192,21 @@ export async function importBookFromFile({ db, booksDir, filePath, title = '' })
     }
   }
 
-  db.prepare(`
-    INSERT INTO books (id, title, author, format, filename, file_path, file_size, total_pages, zoom_scale, reading_dir, cover_data_url, created_at, last_opened_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, finalTitle, author, format, filename, destPath, stat.size, totalPages, zoomScale, readingDir, coverDataUrl, now, now);
-
-  return db.prepare('SELECT * FROM books WHERE id = ?').get(id);
-}
-
-function getBookFull(db, bookId) {
-  const book = db.prepare('SELECT * FROM books WHERE id = ?').get(bookId);
-  if (!book) return null;
-  const bookmarks = db.prepare('SELECT * FROM bookmarks WHERE book_id = ? ORDER BY page ASC, created_at ASC').all(bookId);
-  const highlights = db.prepare('SELECT * FROM highlights WHERE book_id = ? ORDER BY page ASC, created_at ASC').all(bookId)
-    .map((h) => ({ ...h, rects: JSON.parse(h.rects_json) }));
-  const tocEntries = db.prepare('SELECT * FROM toc_entries WHERE book_id = ? ORDER BY page ASC, sort_order ASC, created_at ASC').all(bookId);
-  return { book, bookmarks, highlights, tocEntries };
+  return lib.insertBook({
+    id,
+    title: finalTitle,
+    author,
+    format,
+    filename,
+    file_path: destPath,
+    file_size: stat.size,
+    total_pages: totalPages,
+    zoom_scale: zoomScale,
+    reading_dir: readingDir,
+    cover_data_url: coverDataUrl,
+    created_at: now,
+    last_opened_at: now,
+  });
 }
 
 function buildObsidianMarkdown(data) {
@@ -370,24 +298,18 @@ function buildObsidianMarkdown(data) {
 }
 
 async function handleApi(req, res, urlObj, ctx) {
-  const { db, booksDir, obsidianDir } = ctx;
+  const { store, booksDir, obsidianDir } = ctx;
   const { pathname, searchParams } = urlObj;
   const method = req.method || 'GET';
 
   // GET /api/health
   if (method === 'GET' && pathname === '/api/health') {
-    return sendJson(res, 200, { ok: true, runtime: process.version, formats: ['pdf', 'epub'] });
+    return sendJson(res, 200, { ok: true, runtime: process.version, dbEngine: store.engine, formats: ['pdf', 'epub'] });
   }
 
   // GET /api/books
   if (method === 'GET' && pathname === '/api/books') {
-    const books = db.prepare(`
-      SELECT b.*,
-        (SELECT COUNT(*) FROM highlights h WHERE h.book_id = b.id) AS highlight_count,
-        (SELECT COUNT(*) FROM bookmarks bm WHERE bm.book_id = b.id) AS bookmark_count
-      FROM books b
-      ORDER BY b.last_opened_at DESC, b.created_at DESC
-    `).all();
+    const books = store.listBooks();
     return sendJson(res, 200, { books });
   }
 
@@ -464,12 +386,21 @@ async function handleApi(req, res, urlObj, ctx) {
         }
       }
 
-      db.prepare(`
-        INSERT INTO books (id, title, author, format, filename, file_path, file_size, total_pages, zoom_scale, reading_dir, cover_data_url, created_at, last_opened_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, title, author, detectedFormat, rawFilename, destPath, totalBytes, totalPages, zoomScale, readingDir, coverDataUrl, now, now);
-
-      const created = db.prepare('SELECT * FROM books WHERE id = ?').get(id);
+      const created = store.insertBook({
+        id,
+        title,
+        author,
+        format: detectedFormat,
+        filename: rawFilename,
+        file_path: destPath,
+        file_size: totalBytes,
+        total_pages: totalPages,
+        zoom_scale: zoomScale,
+        reading_dir: readingDir,
+        cover_data_url: coverDataUrl,
+        created_at: now,
+        last_opened_at: now,
+      });
       return sendJson(res, 201, { book: created });
     } catch (err) {
       writeStream.destroy();
@@ -484,12 +415,39 @@ async function handleApi(req, res, urlObj, ctx) {
     const inputPath = String(body.filePath || '').trim();
     if (!inputPath) return sendError(res, 400, 'مسیر فایل وارد نشده است.');
     const created = await importBookFromFile({
-      db,
+      store,
       booksDir,
       filePath: inputPath,
       title: String(body.title || ''),
     });
     return sendJson(res, 201, { book: created });
+  }
+
+  // POST /api/books/seed
+  if (method === 'POST' && pathname === '/api/books/seed') {
+    const { buildSampleEpubBuffer } = await import('./scripts/generate-sample-book.mjs');
+    const epubBuf = buildSampleEpubBuffer();
+    const id = crypto.randomUUID();
+    const destPath = path.join(booksDir, `${id}.epub`);
+    await fsp.writeFile(destPath, epubBuf);
+    const summary = await parseEpubSummary(destPath);
+    const now = new Date().toISOString();
+    const book = store.insertBook({
+      id,
+      title: summary.title || 'Sample EPUB',
+      author: summary.author || 'Ketabkhan Studio',
+      format: 'epub',
+      filename: 'sample-bilingual.epub',
+      file_path: destPath,
+      file_size: epubBuf.length,
+      total_pages: summary.totalChapters,
+      zoom_scale: 1.0,
+      reading_dir: summary.readingDir,
+      cover_data_url: summary.coverDataUrl || '',
+      created_at: now,
+      last_opened_at: now,
+    });
+    return sendJson(res, 201, { book });
   }
 
   // Book-specific routes: /api/books/:id...
@@ -500,7 +458,7 @@ async function handleApi(req, res, urlObj, ctx) {
 
     // GET /api/books/:id/file (HTTP Range 206 streaming)
     if (method === 'GET' && sub === 'file') {
-      const book = db.prepare('SELECT file_path, filename, format FROM books WHERE id = ?').get(bookId);
+      const book = store.getBook(bookId);
       if (!book) return sendError(res, 404, 'کتاب پیدا نشد.');
 
       let stat;
@@ -546,7 +504,7 @@ async function handleApi(req, res, urlObj, ctx) {
 
     // GET /api/books/:id/epub-manifest
     if (method === 'GET' && sub === 'epub-manifest') {
-      const book = db.prepare('SELECT file_path, format FROM books WHERE id = ?').get(bookId);
+      const book = store.getBook(bookId);
       if (!book) return sendError(res, 404, 'کتاب پیدا نشد.');
       if (book.format !== 'epub') return sendError(res, 400, 'این کتاب فرمت EPUB نیست.');
       const manifest = await parseEpubSummary(book.file_path);
@@ -556,7 +514,7 @@ async function handleApi(req, res, urlObj, ctx) {
     // GET /api/books/:id/epub-chapter/:num
     const chMatch = sub.match(/^epub-chapter\/(\d+)$/);
     if (method === 'GET' && chMatch) {
-      const book = db.prepare('SELECT file_path, format FROM books WHERE id = ?').get(bookId);
+      const book = store.getBook(bookId);
       if (!book) return sendError(res, 404, 'کتاب پیدا نشد.');
       if (book.format !== 'epub') return sendError(res, 400, 'این کتاب فرمت EPUB نیست.');
       const chapter = await getEpubChapter(book.file_path, bookId, Number(chMatch[1]));
@@ -565,7 +523,7 @@ async function handleApi(req, res, urlObj, ctx) {
 
     // GET /api/books/:id/epub-asset/*
     if (method === 'GET' && sub.startsWith('epub-asset/')) {
-      const book = db.prepare('SELECT file_path, format FROM books WHERE id = ?').get(bookId);
+      const book = store.getBook(bookId);
       if (!book || book.format !== 'epub') {
         res.writeHead(404);
         return res.end('Not found');
@@ -586,7 +544,7 @@ async function handleApi(req, res, urlObj, ctx) {
 
     // GET /api/books/:id/epub-search?q=...
     if (method === 'GET' && sub === 'epub-search') {
-      const book = db.prepare('SELECT file_path, format FROM books WHERE id = ?').get(bookId);
+      const book = store.getBook(bookId);
       if (!book) return sendError(res, 404, 'کتاب پیدا نشد.');
       if (book.format !== 'epub') return sendError(res, 400, 'این کتاب فرمت EPUB نیست.');
       const q = searchParams.get('q') || '';
@@ -596,42 +554,23 @@ async function handleApi(req, res, urlObj, ctx) {
 
     // GET /api/books/:id
     if (method === 'GET' && sub === '') {
-      const full = getBookFull(db, bookId);
+      const full = store.getBookFull(bookId);
       if (!full) return sendError(res, 404, 'کتاب پیدا نشد.');
       return sendJson(res, 200, full);
     }
 
     // PATCH /api/books/:id
     if (method === 'PATCH' && sub === '') {
-      const existing = db.prepare('SELECT id FROM books WHERE id = ?').get(bookId);
-      if (!existing) return sendError(res, 404, 'کتاب پیدا نشد.');
       const body = await readJsonBody(req);
-      const allowed = [
-        'title', 'author', 'total_pages', 'current_page', 'scroll_ratio',
-        'zoom_mode', 'zoom_scale', 'view_mode', 'page_theme', 'reading_dir',
-        'warmth', 'brightness', 'reading_seconds', 'cover_data_url', 'last_opened_at',
-      ];
-      const sets = [];
-      const values = [];
-      for (const key of allowed) {
-        if (Object.hasOwn(body, key)) {
-          sets.push(`${key} = ?`);
-          values.push(body[key]);
-        }
-      }
-      if (sets.length > 0) {
-        values.push(bookId);
-        db.prepare(`UPDATE books SET ${sets.join(', ')} WHERE id = ?`).run(...values);
-      }
-      const updated = db.prepare('SELECT * FROM books WHERE id = ?').get(bookId);
+      const updated = store.updateBook(bookId, body);
+      if (!updated) return sendError(res, 404, 'کتاب پیدا نشد.');
       return sendJson(res, 200, { book: updated });
     }
 
     // DELETE /api/books/:id
     if (method === 'DELETE' && sub === '') {
-      const book = db.prepare('SELECT file_path FROM books WHERE id = ?').get(bookId);
+      const book = store.deleteBook(bookId);
       if (!book) return sendError(res, 404, 'کتاب پیدا نشد.');
-      db.prepare('DELETE FROM books WHERE id = ?').run(bookId);
       const resolvedFile = path.resolve(book.file_path);
       if (resolvedFile.startsWith(path.resolve(booksDir) + path.sep)) {
         await fsp.rm(resolvedFile, { force: true }).catch(() => {});
@@ -641,92 +580,71 @@ async function handleApi(req, res, urlObj, ctx) {
 
     // POST /api/books/:id/bookmarks
     if (method === 'POST' && sub === 'bookmarks') {
-      const existing = db.prepare('SELECT id FROM books WHERE id = ?').get(bookId);
+      const existing = store.getBook(bookId);
       if (!existing) return sendError(res, 404, 'کتاب پیدا نشد.');
       const body = await readJsonBody(req);
       const page = Math.max(1, Number(body.page) || 1);
       const kind = body.kind === 'pin' ? 'pin' : 'ribbon';
 
       if (kind === 'ribbon' && body.toggle) {
-        const dup = db.prepare("SELECT id FROM bookmarks WHERE book_id = ? AND page = ? AND kind = 'ribbon'").get(bookId, page);
-        if (dup) {
-          db.prepare('DELETE FROM bookmarks WHERE id = ?').run(dup.id);
-          return sendJson(res, 200, { removed: true, id: dup.id });
-        }
+        const toggled = store.toggleRibbonBookmark(bookId, page);
+        if (toggled) return sendJson(res, 200, toggled);
       }
 
-      const id = crypto.randomUUID();
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO bookmarks (id, book_id, page, kind, label, category, color, note, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        bookId,
+      const bookmark = store.insertBookmark({
+        book_id: bookId,
         page,
         kind,
-        String(body.label || ''),
-        String(body.category || 'کلیدی'),
-        String(body.color || 'amber'),
-        String(body.note || ''),
-        now
-      );
-      const bookmark = db.prepare('SELECT * FROM bookmarks WHERE id = ?').get(id);
+        label: String(body.label || ''),
+        category: String(body.category || 'کلیدی'),
+        color: String(body.color || 'amber'),
+        note: String(body.note || ''),
+      });
       return sendJson(res, 201, { bookmark });
     }
 
     // POST /api/books/:id/highlights
     if (method === 'POST' && sub === 'highlights') {
-      const existing = db.prepare('SELECT id FROM books WHERE id = ?').get(bookId);
+      const existing = store.getBook(bookId);
       if (!existing) return sendError(res, 404, 'کتاب پیدا نشد.');
       const body = await readJsonBody(req);
       const rects = Array.isArray(body.rects) ? body.rects : [];
       if (rects.length === 0) return sendError(res, 400, 'مختصات هایلایت الزامی است.');
 
-      const id = crypto.randomUUID();
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO highlights (id, book_id, page, kind, color, quote_text, note, rects_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        bookId,
-        Math.max(1, Number(body.page) || 1),
-        body.kind === 'area' ? 'area' : 'text',
-        String(body.color || 'amber'),
-        String(body.quote_text || ''),
-        String(body.note || ''),
-        JSON.stringify(rects),
-        now,
-        now
-      );
-      const row = db.prepare('SELECT * FROM highlights WHERE id = ?').get(id);
-      return sendJson(res, 201, { highlight: { ...row, rects: JSON.parse(row.rects_json) } });
+      const highlight = store.insertHighlight({
+        book_id: bookId,
+        page: Math.max(1, Number(body.page) || 1),
+        kind: body.kind === 'area' ? 'area' : 'text',
+        color: String(body.color || 'amber'),
+        quote_text: String(body.quote_text || ''),
+        note: String(body.note || ''),
+        rects,
+      });
+      return sendJson(res, 201, { highlight });
     }
 
     // POST /api/books/:id/toc
     if (method === 'POST' && sub === 'toc') {
-      const existing = db.prepare('SELECT id FROM books WHERE id = ?').get(bookId);
+      const existing = store.getBook(bookId);
       if (!existing) return sendError(res, 404, 'کتاب پیدا نشد.');
       const body = await readJsonBody(req);
       const title = String(body.title || '').trim();
       const page = Math.max(1, Number(body.page) || 1);
       if (!title) return sendError(res, 400, 'عنوان سرفصل الزامی است.');
 
-      const id = crypto.randomUUID();
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO toc_entries (id, book_id, title, page, level, sort_order, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(id, bookId, title, page, Number(body.level) || 0, Number(body.sort_order) || 0, now);
-
-      const entry = db.prepare('SELECT * FROM toc_entries WHERE id = ?').get(id);
-      return sendJson(res, 201, { tocEntry: entry });
+      const tocEntry = store.insertTocEntry({
+        book_id: bookId,
+        title,
+        page,
+        level: Number(body.level) || 0,
+        sort_order: Number(body.sort_order) || 0,
+      });
+      return sendJson(res, 201, { tocEntry });
     }
 
     // POST /api/books/:id/export-obsidian
     if (method === 'POST' && sub === 'export-obsidian') {
-      const full = getBookFull(db, bookId);
+      const full = store.getBookFull(bookId);
       if (!full) return sendError(res, 404, 'کتاب پیدا نشد.');
       const markdown = buildObsidianMarkdown(full);
       await fsp.mkdir(obsidianDir, { recursive: true });
@@ -744,23 +662,11 @@ async function handleApi(req, res, urlObj, ctx) {
     const id = bmMatch[1];
     if (method === 'PATCH') {
       const body = await readJsonBody(req);
-      const sets = [];
-      const vals = [];
-      for (const key of ['label', 'category', 'color', 'note', 'page']) {
-        if (Object.hasOwn(body, key)) {
-          sets.push(`${key} = ?`);
-          vals.push(body[key]);
-        }
-      }
-      if (sets.length > 0) {
-        vals.push(id);
-        db.prepare(`UPDATE bookmarks SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
-      }
-      const bookmark = db.prepare('SELECT * FROM bookmarks WHERE id = ?').get(id);
+      const bookmark = store.updateBookmark(id, body);
       return bookmark ? sendJson(res, 200, { bookmark }) : sendError(res, 404, 'نشان پیدا نشد.');
     }
     if (method === 'DELETE') {
-      db.prepare('DELETE FROM bookmarks WHERE id = ?').run(id);
+      store.deleteBookmark(id);
       return sendJson(res, 200, { ok: true });
     }
   }
@@ -771,21 +677,11 @@ async function handleApi(req, res, urlObj, ctx) {
     const id = hlMatch[1];
     if (method === 'PATCH') {
       const body = await readJsonBody(req);
-      const sets = ['updated_at = ?'];
-      const vals = [new Date().toISOString()];
-      for (const key of ['color', 'note', 'quote_text']) {
-        if (Object.hasOwn(body, key)) {
-          sets.push(`${key} = ?`);
-          vals.push(body[key]);
-        }
-      }
-      vals.push(id);
-      db.prepare(`UPDATE highlights SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
-      const row = db.prepare('SELECT * FROM highlights WHERE id = ?').get(id);
-      return row ? sendJson(res, 200, { highlight: { ...row, rects: JSON.parse(row.rects_json) } }) : sendError(res, 404, 'هایلایت پیدا نشد.');
+      const highlight = store.updateHighlight(id, body);
+      return highlight ? sendJson(res, 200, { highlight }) : sendError(res, 404, 'هایلایت پیدا نشد.');
     }
     if (method === 'DELETE') {
-      db.prepare('DELETE FROM highlights WHERE id = ?').run(id);
+      store.deleteHighlight(id);
       return sendJson(res, 200, { ok: true });
     }
   }
@@ -793,22 +689,22 @@ async function handleApi(req, res, urlObj, ctx) {
   // DELETE /api/toc/:tocId
   const tocMatch = pathname.match(/^\/api\/toc\/([a-zA-Z0-9-]+)$/);
   if (tocMatch && method === 'DELETE') {
-    db.prepare('DELETE FROM toc_entries WHERE id = ?').run(tocMatch[1]);
+    store.deleteTocEntry(tocMatch[1]);
     return sendJson(res, 200, { ok: true });
   }
 
   return sendError(res, 404, 'مسیر API پیدا نشد.');
 }
 
-export function startServer({
+export async function startServer({
   host = process.env.HOST || '127.0.0.1',
   port = Number(process.env.PORT || 3847),
   dataDir = resolveDataDir(),
   obsidianDir = resolveObsidianDir(),
   onReady = null,
 } = {}) {
-  const { db, booksDir } = openDatabase(dataDir);
-  const ctx = { db, dataDir, booksDir, obsidianDir };
+  const store = await openLibraryStore(dataDir);
+  const ctx = { store, dataDir, booksDir: store.booksDir, obsidianDir };
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -855,22 +751,28 @@ export function startServer({
     }
   });
 
-  server.listen(port, host, () => {
-    const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
-    console.log(`Ketabkhan Studio running at http://${displayHost}:${port}`);
-    if (host === '0.0.0.0') {
-      const lanUrls = getLanUrls(port);
-      if (lanUrls.length > 0) {
-        console.log('LAN / Android access:');
-        for (const u of lanUrls) console.log(`  -> ${u}`);
+  await new Promise((resolve) => {
+    server.listen(port, host, () => {
+      const addr = server.address();
+      const actualPort = typeof addr === 'object' && addr ? addr.port : port;
+      const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+      console.log(`Ketabkhan Studio running at http://${displayHost}:${actualPort}`);
+      if (host === '0.0.0.0') {
+        const lanUrls = getLanUrls(actualPort);
+        if (lanUrls.length > 0) {
+          console.log('LAN / Android access:');
+          for (const u of lanUrls) console.log(`  -> ${u}`);
+        }
       }
-    }
-    onReady?.({ server, host, port, dataDir, obsidianDir });
+      const info = { server, store, host, port: actualPort, dataDir, obsidianDir };
+      onReady?.(info);
+      resolve(info);
+    });
   });
 
-  return server;
+  return { server, store, host, port: server.address()?.port || port, dataDir, obsidianDir };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  startServer();
+  await startServer();
 }

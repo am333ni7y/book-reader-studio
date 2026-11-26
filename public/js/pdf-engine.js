@@ -1,4 +1,5 @@
 import * as pdfjsLib from '/vendor/pdfjs/legacy/build/pdf.mjs';
+import { api } from './api.js';
 import { normalizePersianText, reconstructPageText } from './bilingual-text.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/legacy/build/pdf.worker.mjs';
@@ -31,14 +32,14 @@ export class PdfEngine {
 
   async loadBook(bookId) {
     this.destroy();
+    const source = await api.getBookPdfSource(bookId);
     const loadingTask = pdfjsLib.getDocument({
-      url: `/api/books/${encodeURIComponent(bookId)}/file`,
+      ...source,
       cMapUrl: '/vendor/pdfjs/cmaps/',
       cMapPacked: true,
       standardFontDataUrl: '/vendor/pdfjs/standard_fonts/',
       wasmUrl: '/vendor/pdfjs/wasm/',
       iccUrl: '/vendor/pdfjs/iccs/',
-      rangeChunkSize: 65536,
     });
     this.loadingTask = loadingTask;
     this.pdfDoc = await loadingTask.promise;

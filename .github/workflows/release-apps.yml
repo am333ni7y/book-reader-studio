@@ -1,0 +1,156 @@
+name: Build & Release Native Apps (macOS, Windows, Android)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Install dependencies & sync Capacitor
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm cap:sync
+
+      - name: Generate release signing keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore android/app/release-key.keystore \
+            -storetype PKCS12 \
+            -alias ketabkhan \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass ketabkhan2026 \
+            -keypass ketabkhan2026 \
+            -dname "CN=Ketabkhan Studio, O=Ketabkhan, C=IR"
+
+      - name: Build signed Release APK
+        working-directory: android
+        env:
+          KETABKHAN_KEYSTORE_PATH: release-key.keystore
+          KETABKHAN_KEYSTORE_PASSWORD: ketabkhan2026
+          KETABKHAN_KEY_ALIAS: ketabkhan
+          KETABKHAN_KEY_PASSWORD: ketabkhan2026
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease
+
+      - name: Stage APK artifact
+        run: |
+          mkdir -p release-artifacts
+          cp android/app/build/outputs/apk/release/*.apk release-artifacts/Ketabkhan-Studio-Android.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: release-artifacts/Ketabkhan-Studio-Android.apk
+
+  windows:
+    name: Build Windows Installers (EXE)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies & build Windows installers
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build:win
+
+      - name: Stage Windows artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          $setup = Get-ChildItem dist-desktop -Filter "*Setup*.exe" | Select-Object -First 1
+          $portable = Get-ChildItem dist-desktop -Filter "*.exe" | Where-Object { $_.Name -notlike "*Setup*" } | Select-Object -First 1
+          if ($setup) { Copy-Item $setup.FullName "release-artifacts/Ketabkhan-Studio-Windows-Setup.exe" }
+          if ($portable) { Copy-Item $portable.FullName "release-artifacts/Ketabkhan-Studio-Windows-Portable.exe" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: release-artifacts/*.exe
+
+  macos:
+    name: Build macOS DMG (Apple Silicon & Intel)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies & build macOS DMGs
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build:web
+          pnpm exec electron-builder --mac dmg --arm64 --x64
+
+      - name: Stage macOS artifacts
+        run: |
+          mkdir -p release-artifacts
+          for f in dist-desktop/*arm64*.dmg; do
+            [ -f "$f" ] && cp "$f" release-artifacts/Ketabkhan-Studio-macOS-AppleSilicon.dmg
+          done
+          for f in dist-desktop/*.dmg; do
+            case "$f" in
+              *arm64*) ;;
+              *) [ -f "$f" ] && cp "$f" release-artifacts/Ketabkhan-Studio-macOS-Intel.dmg ;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: release-artifacts/*.dmg
+
+  release:
+    name: Publish GitHub Release
+    needs: [android, windows, macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: all-artifacts/*

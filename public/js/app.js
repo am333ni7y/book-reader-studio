@@ -311,11 +311,56 @@ async function handlePdfFiles(files) {
   await loadLibrary();
 }
 
+async function triggerBookPicker() {
+  if (window.ketabkhanDesktop?.isDesktop) {
+    try {
+      const res = await api.pickDesktopBooks();
+      if (res?.books?.length) {
+        notify(`${formatFaNum(res.books.length)} کتاب با موفقیت اضافه شد.`);
+        await loadLibrary();
+        if (res.books.length === 1 && el.readerView.hidden) {
+          openBook(res.books[0].id);
+        }
+      }
+    } catch (err) {
+      notify(err.message);
+    }
+    return;
+  }
+  el.pdfFileInput.click();
+}
+
 el.librarySearch.addEventListener('input', renderLibrary);
 el.pdfFileInput.addEventListener('change', (e) => {
   if (e.target.files?.length) handlePdfFiles(e.target.files);
   e.target.value = '';
 });
+
+document.getElementById('btn-add-book-label')?.addEventListener('click', (e) => {
+  if (window.ketabkhanDesktop?.isDesktop) {
+    e.preventDefault();
+    triggerBookPicker();
+  }
+});
+
+document.getElementById('btn-empty-pick-book')?.addEventListener('click', triggerBookPicker);
+document.getElementById('btn-empty-seed-sample')?.addEventListener('click', async () => {
+  try {
+    await api.seedSampleBook();
+    notify('کتاب نمونه راهنما به کتابخانه اضافه شد.');
+    await loadLibrary();
+  } catch (err) {
+    notify(err.message);
+  }
+});
+
+if (window.ketabkhanDesktop?.isDesktop) {
+  window.ketabkhanDesktop.onBooksOpened?.(async (books) => {
+    if (!Array.isArray(books) || books.length === 0) return;
+    await loadLibrary();
+    openBook(books[0].id);
+  });
+}
 
 ['dragenter', 'dragover'].forEach((ev) => {
   el.dropZone.addEventListener(ev, (e) => {
@@ -358,15 +403,36 @@ let hasInAppRootEntry = false;
 let currentHistoryDepth = 0;
 let lastReturnBookId = null;
 
+const USE_QUERY_ROUTING =
+  Boolean(window.Capacitor?.isNativePlatform?.()) ||
+  location.protocol === 'capacitor:' ||
+  location.protocol === 'file:';
+
+function getBookRouteUrl(bookId) {
+  return USE_QUERY_ROUTING ? `?book=${encodeURIComponent(bookId)}` : `/book/${encodeURIComponent(bookId)}`;
+}
+
+function getRootRouteUrl() {
+  return USE_QUERY_ROUTING ? (location.pathname || '/') : '/';
+}
+
+function getBookIdFromLocation() {
+  const qId = new URLSearchParams(location.search).get('book');
+  if (qId) return qId;
+  const m = location.pathname.match(/^\/book\/([^/]+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 async function openBook(bookId, { pushHistory = true } = {}) {
   try {
     lastReturnBookId = bookId;
-    if (pushHistory && location.pathname !== `/book/${encodeURIComponent(bookId)}`) {
+    const targetUrl = getBookRouteUrl(bookId);
+    if (pushHistory && getBookIdFromLocation() !== bookId) {
       currentHistoryDepth += 1;
       history.pushState(
         { view: 'book', bookId, depth: currentHistoryDepth },
         '',
-        `/book/${encodeURIComponent(bookId)}`
+        targetUrl
       );
     }
 
@@ -478,8 +544,8 @@ async function openBook(bookId, { pushHistory = true } = {}) {
     }, 15000);
   } catch (err) {
     notify(`خطا در باز کردن کتاب: ${err.message}`);
-    if (location.pathname !== '/') {
-      history.replaceState({ view: 'library', depth: currentHistoryDepth }, '', '/');
+    if (getBookIdFromLocation()) {
+      history.replaceState({ view: 'library', depth: currentHistoryDepth }, '', getRootRouteUrl());
     }
     backToLibrary();
   }
@@ -520,10 +586,10 @@ function navigateBackToLibrary() {
   if (hasInAppRootEntry && currentHistoryDepth > 0) {
     history.back();
   } else {
-    // Landed directly on deep link /book/:id -> synthesize root entry
+    // Landed directly on deep link -> synthesize root entry
     hasInAppRootEntry = true;
     currentHistoryDepth += 1;
-    history.pushState({ view: 'library', depth: currentHistoryDepth }, '', '/');
+    history.pushState({ view: 'library', depth: currentHistoryDepth }, '', getRootRouteUrl());
     backToLibrary();
   }
 }
@@ -1074,6 +1140,11 @@ el.btnZenMode.addEventListener('click', () => toggleZenMode());
 el.btnExitZen.addEventListener('click', () => toggleZenMode(false));
 
 document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'o') {
+    e.preventDefault();
+    triggerBookPicker();
+    return;
+  }
   if (el.readerView.hidden) return;
   const tag = document.activeElement?.tagName;
   const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
@@ -1194,9 +1265,9 @@ function syncRouteFromLocation(event) {
   if (typeof event?.state?.depth === 'number') {
     currentHistoryDepth = event.state.depth;
   }
-  const m = location.pathname.match(/^\/book\/([^/]+)$/);
-  if (m) {
-    openBook(decodeURIComponent(m[1]), { pushHistory: false });
+  const routeBookId = getBookIdFromLocation();
+  if (routeBookId) {
+    openBook(routeBookId, { pushHistory: false });
   } else {
     hasInAppRootEntry = true;
     if (!el.readerView.hidden) {
@@ -1215,7 +1286,7 @@ window.addEventListener('popstate', syncRouteFromLocation);
 // ==================== BOOT ====================
 initToolbarFocusgroupFallback(el.readerToolbar);
 syncSchemeButtons();
-if (/^\/book\/[^/]+$/.test(location.pathname)) {
+if (getBookIdFromLocation()) {
   hasInAppRootEntry = false;
   currentHistoryDepth = 0;
   history.replaceState({ view: 'book', depth: 0 }, '');

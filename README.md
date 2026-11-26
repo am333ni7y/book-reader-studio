@@ -37,7 +37,19 @@ Most self-hosted readers either require Docker/PostgreSQL stacks or struggle wit
 
 ---
 
-### Quick CLI Installation
+### 📲 One-Click App Installers (Zero Terminal / No Coding Required)
+
+Download the installer for your device from [**GitHub Releases**](https://github.com/am333ni7y/book-reader-studio/releases/latest) and open it directly by clicking the app icon:
+
+| Platform | Installer File | How to Launch |
+| --- | --- | --- |
+| **macOS (Apple Silicon & Intel)** | `Ketabkhan-Studio-macOS-AppleSilicon.dmg` / `Ketabkhan-Studio-macOS-Intel.dmg` | Drag **Ketabkhan Studio** to **Applications** and double-click the icon. |
+| **Windows (10 / 11)** | `Ketabkhan-Studio-Windows-Setup.exe` (or `Portable.exe`) | Run installer, then double-click **Ketabkhan Studio** on Desktop / Start Menu. |
+| **Android (APK)** | `Ketabkhan-Studio-Android.apk` | Tap the APK to install, then tap the **کتاب‌خان استودیو** icon on your Home Screen (100% offline!). |
+
+---
+
+### Quick CLI Installation (Optional — For Developers)
 
 > **Requirement:** Node.js `>= 22.5.0` (built-in `node:sqlite`). The installers below automatically check/install Node.js where possible.
 
@@ -136,7 +148,19 @@ Open the printed LAN URL (e.g., `http://192.168.1.25:3847`) in Chrome on Android
 
 ---
 
-### نصب سریع از طریق کامندلاین (Command Line)
+### 📲 نصب اپلیکیشن با یک کلیک (بدون نیاز به کد و ترمینال)
+
+فایل نصبی مخصوص دستگاه خود را از صفحه [**GitHub Releases**](https://github.com/am333ni7y/book-reader-studio/releases/latest) دانلود کنید و فقط با کلیک روی آیکون برنامه آن را باز کنید:
+
+| سیستم‌عامل | فایل نصبی | روش اجرا |
+| --- | --- | --- |
+| **مک (macOS)** | `Ketabkhan-Studio-macOS-AppleSilicon.dmg` / `Intel.dmg` | برنامه **Ketabkhan Studio** را به پوشه Applications بکشید و روی آیکون آن دابل‌کلیک کنید. |
+| **ویندوز (Windows 10/11)** | `Ketabkhan-Studio-Windows-Setup.exe` یا `Portable.exe` | فایل را اجرا کنید و سپس روی آیکون **Ketabkhan Studio** در دسکتاپ یا منوی استارت کلیک کنید. |
+| **اندروید (Android APK)** | `Ketabkhan-Studio-Android.apk` | فایل APK را روی گوشی نصب کنید و آیکون **کتاب‌خان استودیو** را لمس کنید (کاملاً آفلاین!). |
+
+---
+
+### نصب سریع از طریق کامندلاین (اختیاری — برای توسعه‌دهندگان)
 
 > **پیش‌نیاز:** نسخه `Node.js >= 22.5.0` (دارای `node:sqlite` داخلی). اسکریپت‌های نصبی زیر در صورت نبودن Node.js، آن را به صورت خودکار نصب می‌کنند.
 

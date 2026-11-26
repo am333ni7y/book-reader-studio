@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">کتاب‌خان استودیو</string>
+    <string name="title_activity_main">کتاب‌خان استودیو</string>
+    <string name="package_name">ir.ameeen.ketabkhan</string>
+    <string name="custom_url_scheme">ir.ameeen.ketabkhan</string>
+</resources>

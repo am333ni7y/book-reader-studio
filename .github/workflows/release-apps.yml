@@ -35,26 +35,32 @@ jobs:
           pnpm install
           pnpm cap:sync
 
-      - name: Generate release signing keystore
+      - name: Decode stable release keystore from secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          keytool -genkeypair -v \
-            -keystore android/app/release-key.keystore \
-            -storetype PKCS12 \
-            -alias ketabkhan \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass ketabkhan2026 \
-            -keypass ketabkhan2026 \
-            -dname "CN=Ketabkhan Studio, O=Ketabkhan, C=IR"
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::error::Secret ANDROID_KEYSTORE_BASE64 is empty. Refusing to sign with a throwaway key, because installed apps could never update. See docs/RELEASING.md."
+            exit 1
+          fi
+          for name in ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "$(printenv "$name")" ]; then
+              echo "::error::Secret $name is empty. See docs/RELEASING.md."
+              exit 1
+            fi
+          done
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release-key.keystore
 
       - name: Accept Android SDK licenses & build signed Release APK
         working-directory: android
         env:
           KETABKHAN_KEYSTORE_PATH: ${{ github.workspace }}/android/app/release-key.keystore
-          KETABKHAN_KEYSTORE_PASSWORD: ketabkhan2026
-          KETABKHAN_KEY_ALIAS: ketabkhan
-          KETABKHAN_KEY_PASSWORD: ketabkhan2026
+          KETABKHAN_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KETABKHAN_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KETABKHAN_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
@@ -71,6 +77,10 @@ jobs:
         with:
           name: android-apk
           path: release-artifacts/Ketabkhan-Studio-Android.apk
+
+      - name: Delete decoded keystore
+        if: always()
+        run: rm -f android/app/release-key.keystore
 
   windows:
     name: Build Windows Installers (EXE)

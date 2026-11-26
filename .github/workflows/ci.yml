@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Install, test and syntax-check
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "12.4.2"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install  # same as release-apps.yml; pnpm 12 rejects --frozen-lockfile here (packageManagerDependencies not in lockfile)
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Syntax check
+        run: |
+          for f in server.mjs bin/*.mjs lib/*.mjs electron/*.mjs; do
+            node --check "$f"
+          done

@@ -1,6 +1,6 @@
 {
   "name": "book-reader-studio",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "packageManager": "pnpm@12.4.2",
   "description": "Local-first PDF & EPUB Book Reader Studio with RTL/LTR typography, dual-mode & reflowable highlighting, bookmarks, smart TOC, and Obsidian Markdown export (macOS, Windows, Android).",
   "main": "electron/main.mjs",
@@ -17,6 +17,7 @@
   "scripts": {
     "start": "node bin/ketabkhan.mjs start",
     "start:lan": "node bin/ketabkhan.mjs start --lan",
+    "test": "node --test tests/*.test.mjs",
     "seed": "node scripts/generate-sample-book.mjs",
     "doctor": "node bin/ketabkhan.mjs doctor",
     "build:web": "node scripts/build-web.mjs",

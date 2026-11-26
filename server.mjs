@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { pathToFileURL } from 'node:url';
 import {
   PROJECT_ROOT,
@@ -12,6 +13,14 @@ import {
   getLanUrls,
 } from './lib/paths.mjs';
 import { openLibraryStore } from './lib/db-adapter.mjs';
+import {
+  obsidianFilename,
+  mergeObsidianNote,
+  buildObsidianParts,
+} from './public/js/obsidian-markdown.js';
+
+// Re-exported for tests/server.test.mjs, which imports it from here.
+export { mergeObsidianNote };
 import {
   parseEpubSummary,
   getEpubChapter,
@@ -72,6 +81,8 @@ function sendError(res, status, message) {
   sendJson(res, status, { error: message });
 }
 
+const TOKEN_COOKIE = 'ketabkhan_token';
+
 async function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
   const chunks = [];
   let total = 0;
@@ -84,7 +95,100 @@ async function readJsonBody(req, maxBytes = 2 * 1024 * 1024) {
   }
   const raw = Buffer.concat(chunks).toString('utf8');
   if (!raw.trim()) return {};
-  return JSON.parse(raw);
+  const contentType = String(req.headers['content-type'] || '').trim().toLowerCase();
+  if (!contentType.startsWith('application/json')) {
+    throw Object.assign(new Error('Content-Type باید application/json باشد.'), { statusCode: 415 });
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw Object.assign(new Error('بدنه درخواست JSON معتبر نیست.'), { statusCode: 400 });
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw Object.assign(new Error('بدنه درخواست باید یک شیء JSON باشد.'), { statusCode: 400 });
+  }
+  return parsed;
+}
+
+// DNS-rebinding guard: only loopback names or IP literals may appear in Host.
+function isAllowedHostHeader(hostHeader) {
+  if (!hostHeader || typeof hostHeader !== 'string') return false;
+  let url;
+  try {
+    url = new URL(`http://${hostHeader}`);
+  } catch {
+    return false;
+  }
+  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return false;
+  const hostname = url.hostname.replace(/^\[|\]$/g, '');
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
+  return net.isIP(hostname) !== 0;
+}
+
+// CSRF guard: a present Origin must match the Host the request was sent to.
+function isSameOriginRequest(req) {
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  try {
+    return new URL(String(origin)).host.toLowerCase() === String(req.headers.host || '').toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function isLoopbackHost(host) {
+  const h = String(host || '').replace(/^\[|\]$/g, '').toLowerCase();
+  return h === 'localhost' || h === '::1' || /^127\.\d+\.\d+\.\d+$/.test(h);
+}
+
+function tokenMatches(candidate, expected) {
+  if (typeof candidate !== 'string' || !candidate || !expected) return false;
+  const digest = (value) => crypto.createHash('sha256').update(value, 'utf8').digest();
+  return crypto.timingSafeEqual(digest(candidate), digest(expected));
+}
+
+function parseCookies(header) {
+  const out = {};
+  for (const part of String(header || '').split(';')) {
+    const eq = part.indexOf('=');
+    if (eq <= 0) continue;
+    const name = part.slice(0, eq).trim();
+    let value = part.slice(eq + 1).trim();
+    try {
+      value = decodeURIComponent(value);
+    } catch {}
+    out[name] = value;
+  }
+  return out;
+}
+
+function isAuthorizedApiRequest(req, urlObj, token) {
+  const candidates = [
+    req.headers['x-ketabkhan-token'],
+    urlObj.searchParams.get('token'),
+    parseCookies(req.headers.cookie)[TOKEN_COOKIE],
+  ];
+  return candidates.some((candidate) => tokenMatches(candidate, token));
+}
+
+// Parses a single HTTP Range header. Returns null when unsatisfiable or malformed.
+function parseByteRange(header, total) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header || '').trim());
+  if (!match || (match[1] === '' && match[2] === '')) return null;
+  let start;
+  let end;
+  if (match[1] === '') {
+    const suffix = parseInt(match[2], 10);
+    if (suffix === 0) return null;
+    start = Math.max(0, total - suffix);
+    end = total - 1;
+  } else {
+    start = parseInt(match[1], 10);
+    end = match[2] === '' ? total - 1 : Math.min(parseInt(match[2], 10), total - 1);
+  }
+  if (start >= total || start > end) return null;
+  return { start, end };
 }
 
 function safeResolve(baseDir, reqSubPath) {
@@ -121,10 +225,6 @@ function cleanBookTitle(filename) {
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim() || 'کتاب بدون عنوان';
-}
-
-function sanitizeFilename(name) {
-  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim() || 'book';
 }
 
 function detectFormatFromMagic(buf) {
@@ -166,9 +266,24 @@ export async function importBookFromFile({ store, db, booksDir, filePath, title 
   const destPath = path.join(booksDir, `${id}${ext}`);
   await fsp.copyFile(resolved, destPath);
 
+  return finalizeImportedBook({
+    store: lib,
+    id,
+    format,
+    destPath,
+    filename: path.basename(resolved),
+    fileSize: stat.size,
+    title,
+  });
+}
+
+// Builds and inserts the book row for a file already stored at destPath.
+// Shared by the POST /api/books upload route and importBookFromFile.
+// An invalid EPUB removes destPath and throws a 400 error.
+export async function finalizeImportedBook({ store, id, format, destPath, filename, fileSize, title = '' }) {
   const now = new Date().toISOString();
-  const filename = path.basename(resolved);
-  let finalTitle = String(title || '').trim() || cleanBookTitle(filename);
+  const explicitTitle = String(title || '').trim();
+  let finalTitle = explicitTitle || cleanBookTitle(filename);
   let author = '';
   let totalPages = 0;
   let readingDir = 'rtl';
@@ -178,7 +293,7 @@ export async function importBookFromFile({ store, db, booksDir, filePath, title 
   if (format === 'epub') {
     try {
       const summary = await parseEpubSummary(destPath);
-      if (!String(title || '').trim() && summary.title) {
+      if (!explicitTitle && summary.title) {
         finalTitle = summary.title;
       }
       author = summary.author || '';
@@ -188,18 +303,18 @@ export async function importBookFromFile({ store, db, booksDir, filePath, title 
       zoomScale = 1.0;
     } catch (err) {
       await fsp.rm(destPath, { force: true }).catch(() => {});
-      throw Object.assign(new Error(err.message || 'فایل EPUB معتبر نیست.'), { statusCode: 400 });
+      throw Object.assign(new Error(err.message || 'ساختار EPUB نامعتبر است.'), { statusCode: 400 });
     }
   }
 
-  return lib.insertBook({
+  return store.insertBook({
     id,
     title: finalTitle,
     author,
     format,
     filename,
     file_path: destPath,
-    file_size: stat.size,
+    file_size: fileSize,
     total_pages: totalPages,
     zoom_scale: zoomScale,
     reading_dir: readingDir,
@@ -209,92 +324,129 @@ export async function importBookFromFile({ store, db, booksDir, filePath, title 
   });
 }
 
-function buildObsidianMarkdown(data) {
-  const { book, bookmarks, highlights, tocEntries } = data;
-  const isEpub = book.format === 'epub';
-  const unitLabel = isEpub ? 'فصل' : 'صفحه';
-  const pct = book.total_pages > 0 ? Math.round((book.current_page / book.total_pages) * 100) : 0;
-  const readingMins = Math.round((book.reading_seconds || 0) / 60);
-  const colorLabels = {
-    amber: '🟡 نکته کلیدی (Amber)',
-    sage: '🟢 تایید / کاربردی (Sage)',
-    sky: '🔵 مرجع / تعریف (Sky)',
-    coral: '🔴 نقد / مهم (Coral)',
-    lavender: '🟣 ایده / پرسش (Lavender)',
+// ---- Library backup (annotations + reading state; book files are not included) ----
+const BACKUP_FORMAT = 'ketabkhan-backup';
+const BACKUP_VERSION = 1;
+const BACKUP_BOOK_FIELDS = [
+  'id', 'title', 'author', 'format', 'filename', 'file_size', 'total_pages', 'current_page',
+  'scroll_ratio', 'zoom_mode', 'zoom_scale', 'view_mode', 'page_theme', 'reading_dir',
+  'warmth', 'brightness', 'reading_seconds', 'last_opened_at',
+];
+const BACKUP_READING_FIELDS = [
+  'current_page', 'scroll_ratio', 'zoom_mode', 'zoom_scale', 'view_mode', 'page_theme',
+  'reading_dir', 'warmth', 'brightness', 'reading_seconds', 'last_opened_at',
+];
+const BACKUP_BOOKMARK_FIELDS = ['id', 'book_id', 'page', 'kind', 'label', 'category', 'color', 'note', 'created_at'];
+const BACKUP_HIGHLIGHT_FIELDS = ['id', 'book_id', 'page', 'kind', 'color', 'quote_text', 'note', 'created_at', 'updated_at'];
+const BACKUP_TOC_FIELDS = ['id', 'book_id', 'title', 'page', 'level', 'sort_order', 'created_at'];
+
+function pickFields(source, fields) {
+  return Object.fromEntries(fields.map((f) => [f, source[f] ?? null]));
+}
+
+function buildLibraryBackup(store) {
+  const books = [];
+  const bookmarks = [];
+  const highlights = [];
+  const tocEntries = [];
+  for (const row of store.listBooks()) {
+    const full = store.getBookFull(row.id);
+    if (!full) continue;
+    books.push(pickFields(full.book, BACKUP_BOOK_FIELDS));
+    for (const bm of full.bookmarks) bookmarks.push(pickFields(bm, BACKUP_BOOKMARK_FIELDS));
+    for (const hl of full.highlights) {
+      highlights.push({ ...pickFields(hl, BACKUP_HIGHLIGHT_FIELDS), rects: hl.rects || [] });
+    }
+    for (const t of full.tocEntries) tocEntries.push(pickFields(t, BACKUP_TOC_FIELDS));
+  }
+  return {
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exported_at: new Date().toISOString(),
+    books,
+    bookmarks,
+    highlights,
+    toc_entries: tocEntries,
   };
+}
 
-  const lines = [
-    '---',
-    `title: "${(book.title || '').replace(/"/g, '\\"')}"`,
-    `author: "${(book.author || '').replace(/"/g, '\\"')}"`,
-    `format: "${book.format || 'pdf'}"`,
-    `total_${isEpub ? 'chapters' : 'pages'}: ${book.total_pages || 0}`,
-    `current_${isEpub ? 'chapter' : 'page'}: ${book.current_page || 1}`,
-    `progress: "${pct}%"`,
-    `reading_minutes: ${readingMins}`,
-    `last_read: "${book.last_opened_at}"`,
-    'tags:',
-    '  - reading-notes',
-    '  - book-reader-studio',
-    '---',
-    '',
-    `# ${book.title}`,
-    '',
-    `- **پیشرفت مطالعه:** ${unitLabel} ${book.current_page} از ${book.total_pages || '?'} (${pct}%)`,
-    `- **مدت مطالعه ثبت‌شده:** ${readingMins} دقیقه`,
-    '',
-  ];
+// Matching: id, then (filename AND file_size), then (title AND format). Unmatched books are reported only.
+function importLibraryBackup(store, backup) {
+  if (!backup || typeof backup !== 'object' || backup.format !== BACKUP_FORMAT || backup.version !== BACKUP_VERSION) {
+    throw Object.assign(new Error('فایل پشتیبان معتبر نیست (format/version).'), { statusCode: 400 });
+  }
+  const backupBooks = Array.isArray(backup.books) ? backup.books : [];
+  const localBooks = store.listBooks();
+  const localById = new Map(localBooks.map((b) => [b.id, b]));
+  const idMap = new Map(); // backup book id -> local book id
+  const unmatched = [];
+  let matched = 0;
 
-  if (tocEntries.length > 0) {
-    lines.push('## فهرست سفارشی ثبت‌شده', '');
-    for (const item of tocEntries) {
-      const indent = '  '.repeat(Math.max(0, Number(item.level) || 0));
-      lines.push(`${indent}- **${item.title}** — ${unitLabel} ${item.page}`);
+  for (const bb of backupBooks) {
+    const local = localById.get(bb.id)
+      || localBooks.find((b) => b.filename === bb.filename && Number(b.file_size) === Number(bb.file_size))
+      || localBooks.find((b) => b.title === bb.title && b.format === bb.format);
+    if (!local) {
+      unmatched.push(bb.title || bb.filename || bb.id);
+      continue;
     }
-    lines.push('');
+    matched += 1;
+    idMap.set(bb.id, local.id);
+    const patch = {};
+    for (const key of BACKUP_READING_FIELDS) {
+      if (bb[key] !== undefined && bb[key] !== null) patch[key] = bb[key];
+    }
+    store.updateBook(local.id, patch);
   }
 
-  const pins = bookmarks.filter((b) => b.kind === 'pin');
-  const ribbons = bookmarks.filter((b) => b.kind === 'ribbon');
-
-  if (pins.length > 0 || ribbons.length > 0) {
-    lines.push('## نشان‌ها و بخش‌های کلیدی', '');
-    for (const pin of pins) {
-      lines.push(`- 📌 **${unitLabel} ${pin.page}** — \`${pin.category || 'کلیدی'}\` ${pin.label ? `**${pin.label}**` : ''}`);
-      if (pin.note) lines.push(`  - یادداشت: ${pin.note}`);
-    }
-    if (ribbons.length > 0) {
-      lines.push(`- 🔖 **بوکمارک‌های سریع:** ${unitLabel}های ${ribbons.map((r) => r.page).join('، ')}`);
-    }
-    lines.push('');
-  }
-
-  lines.push('## هایلایت‌ها و یادداشت‌ها', '');
-  if (highlights.length === 0) {
-    lines.push('_هنوز هایلایتی برای این کتاب ثبت نشده است._', '');
-  } else {
-    let lastPage = -1;
-    for (const hl of highlights) {
-      if (hl.page !== lastPage) {
-        lines.push(`### ${unitLabel} ${hl.page}`, '');
-        lastPage = hl.page;
-      }
-      const badge = colorLabels[hl.color] || hl.color;
-      const modeTag = hl.kind === 'area' ? ' `[ناحیه‌ای]`' : '';
-      if (hl.quote_text && hl.quote_text.trim()) {
-        lines.push(`> ${hl.quote_text.trim().replace(/\n+/g, '\n> ')}`, '');
-      } else {
-        lines.push(`> _[هایلایت تصویری/ناحیه‌ای در ${unitLabel} ${hl.page}]_`, '');
-      }
-      lines.push(`- **دسته:** ${badge}${modeTag}`);
-      if (hl.note && hl.note.trim()) {
-        lines.push(`- **یادداشت:** ${hl.note.trim()}`);
-      }
-      lines.push('');
+  // Existing annotation ids on EVERY local book (ids are global primary keys), so re-importing adds nothing
+  // and an id that already lives on another book is skipped instead of failing with a PK error.
+  const existingIds = new Set();
+  for (const localBook of localBooks) {
+    const full = store.getBookFull(localBook.id);
+    if (!full) continue;
+    for (const list of [full.bookmarks, full.highlights, full.tocEntries]) {
+      for (const item of list) existingIds.add(item.id);
     }
   }
 
-  return lines.join('\n');
+  const inserted = { bookmarks: 0, highlights: 0, toc_entries: 0 };
+  const listOf = (key) => (Array.isArray(backup[key]) ? backup[key] : []);
+
+  const pageOf = (item) => Math.max(1, Number(item.page) || 1);
+
+  // All-or-nothing on SQLite so a bad row cannot leave a half-imported library.
+  const tx = store.rawDb;
+  if (tx) tx.exec('BEGIN');
+  try {
+  for (const bm of listOf('bookmarks')) {
+    const localId = idMap.get(bm.book_id);
+    if (!localId || !bm.id || existingIds.has(bm.id)) continue;
+    store.insertBookmark({ ...bm, book_id: localId, page: pageOf(bm) });
+    existingIds.add(bm.id);
+    inserted.bookmarks += 1;
+  }
+  for (const hl of listOf('highlights')) {
+    const localId = idMap.get(hl.book_id);
+    if (!localId || !hl.id || existingIds.has(hl.id)) continue;
+    store.insertHighlight({ ...hl, book_id: localId, page: pageOf(hl), rects: Array.isArray(hl.rects) ? hl.rects : [] });
+    existingIds.add(hl.id);
+    inserted.highlights += 1;
+  }
+  for (const t of listOf('toc_entries')) {
+    const localId = idMap.get(t.book_id);
+    if (!localId || !t.id || existingIds.has(t.id)) continue;
+    store.insertTocEntry({ ...t, book_id: localId, page: pageOf(t) });
+    existingIds.add(t.id);
+    inserted.toc_entries += 1;
+  }
+    if (tx) tx.exec('COMMIT');
+  } catch (err) {
+    if (tx) tx.exec('ROLLBACK');
+    throw Object.assign(new Error(`بازیابی پشتیبان ناموفق بود: ${err.message}`), { statusCode: 400 });
+  }
+
+  return { ok: true, matched, unmatched, inserted };
 }
 
 async function handleApi(req, res, urlObj, ctx) {
@@ -361,45 +513,14 @@ async function handleApi(req, res, urlObj, ctx) {
       const destPath = path.join(booksDir, `${id}${ext}`);
       await fsp.rename(tempPath, destPath);
 
-      const now = new Date().toISOString();
-      let title = rawTitle.trim() || cleanBookTitle(rawFilename);
-      let author = '';
-      let totalPages = 0;
-      let readingDir = 'rtl';
-      let coverDataUrl = '';
-      let zoomScale = 1.25;
-
-      if (detectedFormat === 'epub') {
-        try {
-          const summary = await parseEpubSummary(destPath);
-          if (!rawTitle.trim() && summary.title) {
-            title = summary.title;
-          }
-          author = summary.author || '';
-          totalPages = summary.totalChapters || 0;
-          readingDir = summary.readingDir || 'ltr';
-          coverDataUrl = summary.coverDataUrl || '';
-          zoomScale = 1.0;
-        } catch (err) {
-          await fsp.rm(destPath, { force: true }).catch(() => {});
-          return sendError(res, 400, err.message || 'ساختار EPUB نامعتبر است.');
-        }
-      }
-
-      const created = store.insertBook({
+      const created = await finalizeImportedBook({
+        store,
         id,
-        title,
-        author,
         format: detectedFormat,
+        destPath,
         filename: rawFilename,
-        file_path: destPath,
-        file_size: totalBytes,
-        total_pages: totalPages,
-        zoom_scale: zoomScale,
-        reading_dir: readingDir,
-        cover_data_url: coverDataUrl,
-        created_at: now,
-        last_opened_at: now,
+        fileSize: totalBytes,
+        title: rawTitle,
       });
       return sendJson(res, 201, { book: created });
     } catch (err) {
@@ -450,6 +571,25 @@ async function handleApi(req, res, urlObj, ctx) {
     return sendJson(res, 201, { book });
   }
 
+  // GET /api/library/export (annotations + reading state, no book files)
+  if (method === 'GET' && pathname === '/api/library/export') {
+    const backup = buildLibraryBackup(store);
+    const body = JSON.stringify(backup);
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Content-Disposition': `attachment; filename="ketabkhan-backup-${backup.exported_at.slice(0, 10)}.json"`,
+      'Cache-Control': 'no-store',
+    });
+    return res.end(body);
+  }
+
+  // POST /api/library/import (JSON body from export)
+  if (method === 'POST' && pathname === '/api/library/import') {
+    const backup = await readJsonBody(req, 50 * 1024 * 1024);
+    return sendJson(res, 200, importLibraryBackup(store, backup));
+  }
+
   // Book-specific routes: /api/books/:id...
   const bookMatch = pathname.match(/^\/api\/books\/([a-zA-Z0-9-]+)(?:\/(.*))?$/);
   if (bookMatch) {
@@ -478,13 +618,12 @@ async function handleApi(req, res, urlObj, ctx) {
       };
 
       if (range) {
-        const parts = range.replace(/bytes=/, '').split('-');
-        const start = parseInt(parts[0], 10);
-        const end = parts[1] ? Math.min(parseInt(parts[1], 10), total - 1) : total - 1;
-        if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= total) {
+        const parsed = parseByteRange(range, total);
+        if (!parsed) {
           res.writeHead(416, { 'Content-Range': `bytes */${total}` });
           return res.end();
         }
+        const { start, end } = parsed;
         res.writeHead(206, {
           ...commonHeaders,
           'Content-Range': `bytes ${start}-${end}/${total}`,
@@ -646,11 +785,12 @@ async function handleApi(req, res, urlObj, ctx) {
     if (method === 'POST' && sub === 'export-obsidian') {
       const full = store.getBookFull(bookId);
       if (!full) return sendError(res, 404, 'کتاب پیدا نشد.');
-      const markdown = buildObsidianMarkdown(full);
+      const { frontmatter, body } = buildObsidianParts(full);
       await fsp.mkdir(obsidianDir, { recursive: true });
-      const safeName = sanitizeFilename(full.book.title);
-      const filename = `${safeName}.md`;
+      const filename = obsidianFilename(full.book);
       const savedPath = path.join(obsidianDir, filename);
+      const existing = await fsp.readFile(savedPath, 'utf8').catch(() => '');
+      const markdown = mergeObsidianNote(existing, frontmatter, body);
       await fsp.writeFile(savedPath, markdown, 'utf8');
       return sendJson(res, 200, { ok: true, savedPath, filename, markdown });
     }
@@ -702,17 +842,48 @@ export async function startServer({
   dataDir = resolveDataDir(),
   obsidianDir = resolveObsidianDir(),
   onReady = null,
+  token: tokenOption = '',
 } = {}) {
   const store = await openLibraryStore(dataDir);
   const ctx = { store, dataDir, booksDir: store.booksDir, obsidianDir };
 
+  const lanMode = !isLoopbackHost(host);
+  const lanToken = lanMode
+    ? String(tokenOption || process.env.KETABKHAN_TOKEN || '').trim() || crypto.randomBytes(16).toString('hex')
+    : '';
+
   const server = http.createServer(async (req, res) => {
     try {
-      const urlObj = new URL(req.url || '/', `http://${req.headers.host || `${host}:${port}`}`);
+      if (!isAllowedHostHeader(req.headers.host)) {
+        return sendError(res, 403, 'Host header not allowed');
+      }
+
+      const urlObj = new URL(req.url || '/', `http://${req.headers.host}`);
       const { pathname } = urlObj;
 
       if (pathname.startsWith('/api/')) {
+        const isReadOnly = req.method === 'GET' || req.method === 'HEAD';
+        if (!isReadOnly && !isSameOriginRequest(req)) {
+          return sendError(res, 403, 'Cross-origin request blocked');
+        }
+        if (lanMode && !isAuthorizedApiRequest(req, urlObj, lanToken)) {
+          return sendError(res, 401, 'Token required');
+        }
         return await handleApi(req, res, urlObj, ctx);
+      }
+
+      if (lanMode && (req.method === 'GET' || req.method === 'HEAD') && urlObj.searchParams.has('token')) {
+        if (tokenMatches(urlObj.searchParams.get('token'), lanToken)) {
+          urlObj.searchParams.delete('token');
+          const query = urlObj.searchParams.toString();
+          const location = `${pathname}${query ? `?${query}` : ''}${urlObj.hash}`;
+          res.writeHead(302, {
+            Location: location,
+            'Set-Cookie': `${TOKEN_COOKIE}=${encodeURIComponent(lanToken)}; HttpOnly; SameSite=Strict; Path=/`,
+            'Cache-Control': 'no-store',
+          });
+          return res.end();
+        }
       }
 
       if (pathname.startsWith('/vendor/pdfjs/')) {
@@ -755,22 +926,33 @@ export async function startServer({
     server.listen(port, host, () => {
       const addr = server.address();
       const actualPort = typeof addr === 'object' && addr ? addr.port : port;
-      const displayHost = host === '0.0.0.0' ? '127.0.0.1' : host;
+      const displayHost = lanMode && host === '0.0.0.0' ? '127.0.0.1' : host;
       console.log(`Ketabkhan Studio running at http://${displayHost}:${actualPort}`);
-      if (host === '0.0.0.0') {
-        const lanUrls = getLanUrls(actualPort);
+      if (lanMode) {
+        const lanUrls = getLanUrls(actualPort, lanToken);
         if (lanUrls.length > 0) {
-          console.log('LAN / Android access:');
+          console.log('LAN / Android access (token required for /api):');
           for (const u of lanUrls) console.log(`  -> ${u}`);
+        } else {
+          console.log(`Access token: ${lanToken}`);
         }
       }
-      const info = { server, store, host, port: actualPort, dataDir, obsidianDir };
+      const info = { server, store, host, port: actualPort, dataDir, obsidianDir, token: lanToken, lan: lanMode };
       onReady?.(info);
       resolve(info);
     });
   });
 
-  return { server, store, host, port: server.address()?.port || port, dataDir, obsidianDir };
+  return {
+    server,
+    store,
+    host,
+    port: server.address()?.port || port,
+    dataDir,
+    obsidianDir,
+    token: lanToken,
+    lan: lanMode,
+  };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

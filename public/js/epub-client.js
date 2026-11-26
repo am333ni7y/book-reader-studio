@@ -124,6 +124,10 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+// Same caps as lib/epub-parser.mjs (MAX_ZIP_ENTRY_BYTES / MAX_ZIP_ENTRIES)
+const CLIENT_ZIP_MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+const CLIENT_ZIP_MAX_ENTRIES = 20000;
+
 export async function openClientZipArchive(blobOrBuffer) {
   const buf = blobOrBuffer instanceof Uint8Array
     ? blobOrBuffer
@@ -152,6 +156,9 @@ export async function openClientZipArchive(blobOrBuffer) {
 
   const totalEntries = view.getUint16(eocdOffset + 10, true);
   const cdOffset = view.getUint32(eocdOffset + 16, true);
+  if (totalEntries > CLIENT_ZIP_MAX_ENTRIES) {
+    throw new Error(`تعداد فایل‌های EPUB از حد مجاز (${CLIENT_ZIP_MAX_ENTRIES}) بیشتر است.`);
+  }
   const entries = new Map();
 
   let ptr = cdOffset;
@@ -159,6 +166,7 @@ export async function openClientZipArchive(blobOrBuffer) {
     if (view.getUint32(ptr, true) !== 0x02014b50) break;
     const compressionMethod = view.getUint16(ptr + 10, true);
     const compressedSize = view.getUint32(ptr + 20, true);
+    const uncompressedSize = view.getUint32(ptr + 24, true);
     const nameLen = view.getUint16(ptr + 28, true);
     const extraLen = view.getUint16(ptr + 30, true);
     const commentLen = view.getUint16(ptr + 32, true);
@@ -167,7 +175,7 @@ export async function openClientZipArchive(blobOrBuffer) {
     const rawName = utf8Decoder.decode(buf.subarray(ptr + 46, ptr + 46 + nameLen));
     const name = normalizeZipPath(rawName);
     if (name && !name.endsWith('/')) {
-      entries.set(name, { name, compressionMethod, compressedSize, localHeaderOffset });
+      entries.set(name, { name, compressionMethod, compressedSize, uncompressedSize, localHeaderOffset });
     }
     ptr += 46 + nameLen + extraLen + commentLen;
   }
@@ -198,6 +206,10 @@ export async function openClientZipArchive(blobOrBuffer) {
       throw new Error(`داده فایل در آرشیو ناقص است: ${key}`);
     }
 
+    if (entry.uncompressedSize > CLIENT_ZIP_MAX_ENTRY_BYTES || entry.compressedSize > CLIENT_ZIP_MAX_ENTRY_BYTES) {
+      throw new Error(`اندازه فایل داخل EPUB از حد مجاز بیشتر است: ${key}`);
+    }
+
     const slice = buf.subarray(dataStart, dataEnd);
     if (entry.compressionMethod === 0) {
       return slice;
@@ -206,8 +218,30 @@ export async function openClientZipArchive(blobOrBuffer) {
       if (typeof DecompressionStream !== 'function') {
         throw new Error('مرورگر از DecompressionStream پشتیبانی نمی‌کند.');
       }
-      const stream = new Blob([slice]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-      return new Uint8Array(await new Response(stream).arrayBuffer());
+      const reader = new Blob([slice]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+      const chunks = [];
+      let total = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > CLIENT_ZIP_MAX_ENTRY_BYTES) {
+            throw new Error(`فایل داخل EPUB پس از باز شدن از حد مجاز بزرگ‌تر است: ${key}`);
+          }
+          chunks.push(value);
+        }
+      } catch (err) {
+        reader.cancel().catch(() => {});
+        throw err;
+      }
+      const out = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) {
+        out.set(c, off);
+        off += c.byteLength;
+      }
+      return out;
     }
     throw new Error(`روش فشرده‌سازی ZIP پشتیبانی نمی‌شود: ${entry.compressionMethod}`);
   }
@@ -543,7 +577,17 @@ export async function getClientEpubChapter(bookId, blobOrBuffer, chapterNum) {
     .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, '')
     .replace(/<(object|embed|applet|base|form)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
     .replace(/<(object|embed|applet|base|meta|link)\b[^>]*\/?>/gi, '')
-    .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+    .replace(/<\/?(script|iframe)\b[^>]*(>|$)/gi, '')
+    .replace(/(^|[\s/"'])on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '$1');
+
+  html = html.replace(
+    /(^|[\s/"'])(xlink:href|href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi,
+    (full, lead, attr, dVal, sVal) => {
+      const norm = decodeXmlEntities(dVal ?? sVal ?? '').replace(/[\u0000- \u007F]+/g, '').toLowerCase();
+      if (norm.startsWith('javascript:') || norm.startsWith('vbscript:')) return `${lead}${attr}="#"`;
+      return full;
+    }
+  );
 
   const assetMatches = [...html.matchAll(/\b(src|poster|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)];
   for (const m of assetMatches) {

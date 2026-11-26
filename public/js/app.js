@@ -336,6 +336,53 @@ el.pdfFileInput.addEventListener('change', (e) => {
   e.target.value = '';
 });
 
+// Library backup: annotations + reading state (book files are not included).
+document.getElementById('btn-export-library').addEventListener('click', async () => {
+  try {
+    const backup = await api.exportLibrary();
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ketabkhan-backup-${String(backup.exported_at).slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    notify(`پشتیبان ${backup.books.length} کتاب ساخته شد.`);
+  } catch (err) {
+    notify(`خطا در پشتیبان‌گیری: ${err.message}`);
+  }
+});
+
+const libraryBackupInput = document.getElementById('library-backup-input');
+document.getElementById('btn-import-library').addEventListener('click', () => libraryBackupInput.click());
+libraryBackupInput.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  let backup;
+  try {
+    backup = JSON.parse(await file.text());
+  } catch {
+    notify('فایل انتخاب‌شده JSON معتبر نیست.');
+    return;
+  }
+  try {
+    const res = await api.importLibrary(backup);
+    const missing = res.unmatched.length;
+    const missingNote = missing
+      ? ` ${missing} کتاب در کتابخانه پیدا نشد (${res.unmatched.slice(0, 3).join('، ')}${missing > 3 ? '…' : ''}).`
+      : '';
+    notify(
+      `بازیابی انجام شد: ${res.matched} کتاب منطبق. افزوده‌شده: ${res.inserted.bookmarks} نشان، ${res.inserted.highlights} هایلایت، ${res.inserted.toc_entries} سرفصل.${missingNote}`
+    );
+    await loadLibrary();
+  } catch (err) {
+    notify(`خطا در بازیابی: ${err.message}`);
+  }
+});
+
 document.getElementById('btn-add-book-label')?.addEventListener('click', (e) => {
   if (window.ketabkhanDesktop?.isDesktop) {
     e.preventDefault();

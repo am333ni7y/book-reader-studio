@@ -68,6 +68,7 @@ Download the installer for your device from [**GitHub Releases**](https://github
 **Installer notes**
 - **Windows:** builds are not code-signed yet. SmartScreen may show "Windows protected your PC". Click **More info**, then **Run anyway**.
 - **macOS:** builds are not signed or notarized. Right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine "/Applications/Ketabkhan Studio.app"` in Terminal.
+- **Signing:** builds are signed automatically once the maintainer configures signing secrets; see [docs/RELEASING.md](docs/RELEASING.md) (Code signing).
 - **Android (upgrading from v3.0.0):** v3.0.0 was signed with a temporary key, so the next version cannot install over it. Export your notes first (Obsidian export), uninstall v3.0.0, then install the new APK. Highlights and bookmarks stored inside the app are removed with it.
 
 ---
@@ -203,6 +204,7 @@ Then open the printed LAN URL (e.g., `http://192.168.1.25:3847/?token=...`) in C
 **یادداشت‌های نصب**
 - **ویندوز:** فایل‌های ویندوز هنوز امضای دیجیتال ندارند. ممکن است SmartScreen پیام «Windows protected your PC» را نشان دهد. روی **More info** و سپس **Run anyway** کلیک کنید.
 - **مک:** فایل‌های مک امضا و notarize نشده‌اند. روی برنامه راست‌کلیک کنید و **Open** را بزنید، یا در ترمینال این دستور را اجرا کنید: `xattr -dr com.apple.quarantine "/Applications/Ketabkhan Studio.app"`
+- **امضای خودکار:** به محض اینکه نگه‌دارنده پروژه اطلاعات امضا (secrets) را تنظیم کند، فایل‌های ویندوز و مک خودکار امضا می‌شوند؛ جزئیات در [docs/RELEASING.md](docs/RELEASING.md) (بخش Code signing).
 - **اندروید (ارتقا از v3.0.0):** نسخه v3.0.0 با یک کلید موقت امضا شده، بنابراین نسخه بعدی روی آن نصب نمی‌شود. ابتدا یادداشت‌ها را با خروجی Obsidian ذخیره کنید، سپس v3.0.0 را حذف و APK جدید را نصب کنید. هایلایت‌ها و بوکمارک‌های داخل برنامه با حذف آن از بین می‌روند.
 
 ---

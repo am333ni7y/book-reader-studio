@@ -85,6 +85,12 @@ jobs:
   windows:
     name: Build Windows Installers (EXE)
     runs-on: windows-latest
+    # Job-level permissions replace the workflow-level ones. This job never writes
+    # to the repository; actions: read lets the SignPath action fetch the uploaded
+    # unsigned artifact (only used in SignPath mode).
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
 
@@ -97,12 +103,103 @@ jobs:
           node-version: "24"
           cache: "pnpm"
 
-      - name: Install dependencies & build Windows installers
+      - name: Install dependencies
+        run: pnpm install
+
+      # GitHub `if:` cannot read secrets, so the mode is computed here from the
+      # (possibly empty) values and exposed as steps.sign.outputs.mode.
+      # Precedence: azure > pfx > signpath > unsigned. Missing secrets never fail the job.
+      - name: Detect Windows signing mode
+        id: sign
+        shell: bash
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
+          AZURE_SIGN_PUBLISHER: ${{ secrets.AZURE_SIGN_PUBLISHER }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG || secrets.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_POLICY_SLUG: ${{ vars.SIGNPATH_POLICY_SLUG || secrets.SIGNPATH_POLICY_SLUG }}
         run: |
-          pnpm install
-          pnpm build:win
+          all_set() { for n in "$@"; do [ -n "$(printenv "$n")" ] || return 1; done; }
+          any_set() { for n in "$@"; do [ -z "$(printenv "$n")" ] || return 0; done; return 1; }
+          warn_partial() {
+            label="$1"; shift
+            if any_set "$@" && ! all_set "$@"; then
+              echo "::warning::$label signing is only partly configured (needs all of: $*). Ignoring it."
+            fi
+          }
+          azure_vars=(AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SIGN_ENDPOINT AZURE_SIGN_ACCOUNT AZURE_SIGN_PROFILE AZURE_SIGN_PUBLISHER)
+          pfx_vars=(WIN_CSC_LINK WIN_CSC_KEY_PASSWORD)
+          signpath_vars=(SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID SIGNPATH_PROJECT_SLUG SIGNPATH_POLICY_SLUG)
+
+          warn_partial "Azure Artifact Signing" "${azure_vars[@]}"
+          warn_partial "PFX" "${pfx_vars[@]}"
+          warn_partial "SignPath" "${signpath_vars[@]}"
+
+          mode=unsigned
+          if all_set "${azure_vars[@]}"; then
+            mode=azure
+          elif all_set "${pfx_vars[@]}"; then
+            mode=pfx
+          elif all_set "${signpath_vars[@]}"; then
+            mode=signpath
+          fi
+
+          case "$mode" in
+            azure)    echo "::notice::Windows signing mode: Azure Artifact Signing" ;;
+            pfx)      echo "::notice::Windows signing mode: PFX certificate (WIN_CSC_LINK)" ;;
+            signpath) echo "::notice::Windows signing mode: SignPath (build unsigned, then submit a signing request)" ;;
+            *)        echo "::notice::Windows signing mode: UNSIGNED (no signing secrets configured, see docs/RELEASING.md)" ;;
+          esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      # SignPath mode builds unsigned here and signs the staged files afterwards.
+      - name: Build Windows installers
+        shell: bash
+        env:
+          SIGN_MODE: ${{ steps.sign.outputs.mode }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_SIGN_ENDPOINT: ${{ secrets.AZURE_SIGN_ENDPOINT }}
+          AZURE_SIGN_ACCOUNT: ${{ secrets.AZURE_SIGN_ACCOUNT }}
+          AZURE_SIGN_PROFILE: ${{ secrets.AZURE_SIGN_PROFILE }}
+          AZURE_SIGN_PUBLISHER: ${{ secrets.AZURE_SIGN_PUBLISHER }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          pnpm build:web
+
+          args=(--win nsis portable --publish never)
+          case "$SIGN_MODE" in
+            azure)
+              # electron-builder reads AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET itself.
+              unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+              args+=(
+                "-c.win.azureSignOptions.endpoint=$AZURE_SIGN_ENDPOINT"
+                "-c.win.azureSignOptions.codeSigningAccountName=$AZURE_SIGN_ACCOUNT"
+                "-c.win.azureSignOptions.certificateProfileName=$AZURE_SIGN_PROFILE"
+                "-c.win.azureSignOptions.publisherName=$AZURE_SIGN_PUBLISHER"
+              )
+              ;;
+            pfx)
+              # electron-builder reads WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD natively.
+              unset AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SIGN_ENDPOINT AZURE_SIGN_ACCOUNT AZURE_SIGN_PROFILE AZURE_SIGN_PUBLISHER
+              ;;
+            *)
+              unset AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_SIGN_ENDPOINT AZURE_SIGN_ACCOUNT AZURE_SIGN_PROFILE AZURE_SIGN_PUBLISHER WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+              export CSC_IDENTITY_AUTO_DISCOVERY=false
+              ;;
+          esac
+
+          pnpm exec electron-builder "${args[@]}"
 
       - name: Stage Windows artifacts
         shell: pwsh
@@ -112,6 +209,57 @@ jobs:
           $portable = Get-ChildItem dist-desktop -Filter "*.exe" | Where-Object { $_.Name -notlike "*Setup*" } | Select-Object -First 1
           if ($setup) { Copy-Item $setup.FullName "release-artifacts/Ketabkhan-Studio-Windows-Setup.exe" }
           if ($portable) { Copy-Item $portable.FullName "release-artifacts/Ketabkhan-Studio-Windows-Portable.exe" }
+
+      - name: Upload unsigned installers for SignPath
+        id: upload-unsigned
+        if: steps.sign.outputs.mode == 'signpath'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: release-artifacts/*.exe
+          retention-days: 1
+
+      - name: Sign installers with SignPath
+        if: steps.sign.outputs.mode == 'signpath'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || secrets.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || secrets.SIGNPATH_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIG_SLUG || secrets.SIGNPATH_ARTIFACT_CONFIG_SLUG }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-windows
+
+      - name: Stage SignPath-signed installers
+        if: steps.sign.outputs.mode == 'signpath'
+        shell: pwsh
+        run: |
+          $signed = @(Get-ChildItem signed-windows -Filter "*.exe" -Recurse)
+          if ($signed.Count -eq 0) { throw "SignPath returned no .exe files in signed-windows/." }
+          foreach ($orig in Get-ChildItem release-artifacts -Filter "*.exe") {
+            $match = $signed | Where-Object { $_.Name -eq $orig.Name } | Select-Object -First 1
+            if (-not $match) { throw "SignPath output has no signed copy of $($orig.Name). Check the artifact configuration in SignPath (see docs/RELEASING.md)." }
+            Copy-Item $match.FullName $orig.FullName -Force
+          }
+
+      - name: Verify Windows signatures
+        if: steps.sign.outputs.mode != 'unsigned'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem release-artifacts -Filter "*.exe")
+          if ($files.Count -eq 0) { throw "No staged .exe files to verify." }
+          $bad = 0
+          foreach ($f in $files) {
+            $sig = Get-AuthenticodeSignature -FilePath $f.FullName
+            Write-Host "$($f.Name): $($sig.Status) | signer: $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Host "::error::$($f.Name) has Authenticode status '$($sig.Status)', expected 'Valid'. $($sig.StatusMessage)"
+              $bad++
+            }
+          }
+          if ($bad -gt 0) { exit 1 }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -133,13 +281,140 @@ jobs:
           node-version: "24"
           cache: "pnpm"
 
-      - name: Install dependencies & build macOS DMGs
+      - name: Install dependencies
+        run: pnpm install
+
+      # mode: unsigned | signed | notarized. notary: none | api | appleid.
+      # Notarization secrets are ignored unless the signing certificate is present.
+      - name: Detect macOS signing mode
+        id: sign
+        shell: bash
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          pnpm install
+          all_set() { for n in "$@"; do [ -n "$(printenv "$n")" ] || return 1; done; }
+          any_set() { for n in "$@"; do [ -z "$(printenv "$n")" ] || return 0; done; return 1; }
+
+          mode=unsigned
+          notary=none
+          if all_set MAC_CSC_LINK MAC_CSC_KEY_PASSWORD; then
+            mode=signed
+            if all_set APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER; then
+              mode=notarized; notary=api
+            elif all_set APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; then
+              mode=notarized; notary=appleid
+            elif any_set APPLE_API_KEY_P8 APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; then
+              echo "::warning::Notarization secrets are only partly configured (API key needs APPLE_API_KEY_P8 + APPLE_API_KEY_ID + APPLE_API_ISSUER; Apple ID needs APPLE_ID + APPLE_APP_SPECIFIC_PASSWORD + APPLE_TEAM_ID). Building signed but NOT notarized."
+            fi
+          elif any_set MAC_CSC_LINK MAC_CSC_KEY_PASSWORD; then
+            echo "::warning::macOS signing is only partly configured (needs MAC_CSC_LINK and MAC_CSC_KEY_PASSWORD). Building unsigned."
+          fi
+
+          case "$mode" in
+            notarized) echo "::notice::macOS signing mode: signed + notarized (credentials: $notary)" ;;
+            signed)    echo "::notice::macOS signing mode: signed only (no notarization credentials)" ;;
+            *)         echo "::notice::macOS signing mode: UNSIGNED (no signing secrets configured, see docs/RELEASING.md)" ;;
+          esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "notary=$notary" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS DMGs
+        shell: bash
+        env:
+          SIGN_MODE: ${{ steps.sign.outputs.mode }}
+          NOTARY: ${{ steps.sign.outputs.notary }}
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
           pnpm build:web
-          pnpm exec electron-builder --mac dmg --arm64 --x64 --publish never
+
+          args=(--mac dmg --arm64 --x64 --publish never)
+
+          if [ "$SIGN_MODE" = "unsigned" ]; then
+            unset APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            # No notarize override: with no Apple credentials in env, electron-builder skips notarization.
+            # (A CLI "-c.mac.notarize=false" may arrive as the string "false" and fail schema validation.)
+          else
+            export CSC_LINK="$MAC_CSC_LINK"
+            export CSC_KEY_PASSWORD="$MAC_CSC_KEY_PASSWORD"
+            case "$NOTARY" in
+              api)
+                umask 077
+                printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+                export APPLE_API_KEY="$RUNNER_TEMP/AuthKey.p8"
+                unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+                ;;
+              appleid)
+                unset APPLE_API_KEY_ID APPLE_API_ISSUER
+                ;;
+              *)
+                unset APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+                ;;
+            esac
+          fi
+
+          pnpm exec electron-builder "${args[@]}"
+
+      - name: Verify macOS signature and notarization
+        if: steps.sign.outputs.mode != 'unsigned'
+        shell: bash
+        env:
+          SIGN_MODE: ${{ steps.sign.outputs.mode }}
+        run: |
+          shopt -s nullglob
+          apps=(dist-desktop/mac*/*.app)
+          if [ ${#apps[@]} -eq 0 ]; then
+            echo "::error::No .app bundle found under dist-desktop/mac*/ to verify."
+            exit 1
+          fi
+
+          for app in "${apps[@]}"; do
+            echo "== codesign: $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            if [ "$SIGN_MODE" = "notarized" ]; then
+              echo "== stapler (app): $app"
+              xcrun stapler validate "$app"
+              echo "== spctl: $app"
+              spctl -a -t exec -vv "$app"
+            fi
+          done
+
+          if [ "$SIGN_MODE" = "notarized" ]; then
+            for dmg in dist-desktop/*.dmg; do
+              echo "== dmg: $dmg"
+              codesign --verify --verbose=2 "$dmg"
+              # electron-builder notarizes and staples the .app before packing the DMG;
+              # the DMG file itself normally carries no ticket, so this is informational.
+              xcrun stapler validate "$dmg" || echo "::warning::$dmg has no stapled ticket on the disk image itself (expected with electron-builder). Checking the app inside it instead."
+              mnt="$RUNNER_TEMP/dmg-verify-$(basename "$dmg" .dmg)"
+              mkdir -p "$mnt"
+              hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt" > /dev/null
+              rc=0
+              inner=("$mnt"/*.app)
+              if [ ${#inner[@]} -eq 0 ]; then
+                echo "::error::No .app inside $dmg"
+                rc=1
+              else
+                xcrun stapler validate "${inner[0]}" || rc=$?
+              fi
+              hdiutil detach "$mnt" -quiet || true
+              if [ "$rc" -ne 0 ]; then exit "$rc"; fi
+            done
+          fi
 
       - name: Stage macOS artifacts
         run: |
@@ -158,6 +433,10 @@ jobs:
         with:
           name: macos-dmg
           path: release-artifacts/*.dmg
+
+      - name: Delete decoded signing keys
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
 
   release:
     name: Publish GitHub Release

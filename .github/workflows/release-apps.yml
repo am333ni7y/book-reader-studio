@@ -129,7 +129,7 @@ jobs:
         run: |
           pnpm install
           pnpm build:web
-          pnpm exec electron-builder --mac dmg --arm64 --x64
+          pnpm exec electron-builder --mac dmg --arm64 --x64 --publish never
 
       - name: Stage macOS artifacts
         run: |

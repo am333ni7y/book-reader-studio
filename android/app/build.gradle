@@ -30,7 +30,11 @@ android {
     buildTypes {
         release {
             def ksPath = System.getenv("KETABKHAN_KEYSTORE_PATH")
-            signingConfig (ksPath != null && !ksPath.isEmpty() && file(ksPath).exists()) ? signingConfigs.release : signingConfigs.debug
+            if (ksPath != null && !ksPath.isEmpty() && file(ksPath).exists()) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

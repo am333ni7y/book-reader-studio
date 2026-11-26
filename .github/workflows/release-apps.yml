@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: "12.4.2"
 
       - uses: actions/setup-node@v4
         with:
@@ -30,7 +32,7 @@ jobs:
 
       - name: Install dependencies & sync Capacitor
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install
           pnpm cap:sync
 
       - name: Generate release signing keystore
@@ -46,14 +48,17 @@ jobs:
             -keypass ketabkhan2026 \
             -dname "CN=Ketabkhan Studio, O=Ketabkhan, C=IR"
 
-      - name: Build signed Release APK
+      - name: Accept Android SDK licenses & build signed Release APK
         working-directory: android
         env:
-          KETABKHAN_KEYSTORE_PATH: release-key.keystore
+          KETABKHAN_KEYSTORE_PATH: ${{ github.workspace }}/android/app/release-key.keystore
           KETABKHAN_KEYSTORE_PASSWORD: ketabkhan2026
           KETABKHAN_KEY_ALIAS: ketabkhan
           KETABKHAN_KEY_PASSWORD: ketabkhan2026
         run: |
+          if [ -n "${ANDROID_HOME:-}" ] && [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          fi
           chmod +x gradlew
           ./gradlew assembleRelease
 
@@ -74,6 +79,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: "12.4.2"
 
       - uses: actions/setup-node@v4
         with:
@@ -81,8 +88,10 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies & build Windows installers
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install
           pnpm build:win
 
       - name: Stage Windows artifacts
@@ -106,6 +115,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
+        with:
+          version: "12.4.2"
 
       - uses: actions/setup-node@v4
         with:
@@ -116,7 +127,7 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install
           pnpm build:web
           pnpm exec electron-builder --mac dmg --arm64 --x64
 

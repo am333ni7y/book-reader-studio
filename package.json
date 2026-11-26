@@ -1,6 +1,6 @@
 {
   "name": "book-reader-studio",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "packageManager": "pnpm@12.4.2",
   "description": "Local-first PDF & EPUB Book Reader Studio with RTL/LTR typography, dual-mode & reflowable highlighting, bookmarks, smart TOC, and Obsidian Markdown export (macOS, Windows, Android).",
   "main": "electron/main.mjs",

@@ -26,7 +26,7 @@ jobs:
           cache: "pnpm"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install  # same as release-apps.yml; pnpm 12 rejects --frozen-lockfile here (packageManagerDependencies not in lockfile)
 
       - name: Run tests
         run: pnpm test
